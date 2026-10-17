@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Combat de balles</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #0a0f2c;
+  }
+  canvas {
+    display: block;
+    touch-action: manipulation;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+'use strict';
+
+/* =========================================================================
+ *  COMBAT DE BALLES
+ *  Simulation passive : deux balles s'affrontent dans une arène fermée.
+ *
+ *  Contrôles : Espace = pause, R = recommencer, 1/2/3 = vitesse x1/x2/x4
+ *              (clic / toucher sur l'écran de victoire = recommencer)
+ *
+ *  Toute la simulation se fait dans un repère « monde » fixe (l'arène fait
+ *  CONFIG.arena.size unités de côté, origine en haut à gauche de l'intérieur).
+ *  Le rendu met ensuite ce repère à l'échelle de la fenêtre : l'équilibrage
+ *  ne dépend donc pas de la taille de l'écran.
+ * ========================================================================= */
+
+/* -------------------------------------------------------------------------
+ *  CONFIGURATION — modifie ces valeurs pour équilibrer le jeu.
+ *  Unités : distances en unités monde, temps en secondes,
+ *           vitesses en unités/s, angles en radians.
+ *  Valeurs actuelles testées sur 600 combats simulés : ~50 % / 50 %,
+ *  durée moyenne ~68 s (33 s à 110 s). Pour re-vérifier après un changement,
+ *  ouvre la console du navigateur et tape : BallBattle.simulate(300)
+ * ------------------------------------------------------------------------- */
+const CONFIG = {
+  arena: {
+    size: 600,            // côté intérieur de l'arène
+    wall: 26,             // épaisseur des murs biseautés
+  },
+
+  physics: {
+    hz: 120,              // fréquence de la boucle à pas fixe
+    maxStepsPerFrame: 60, // garde-fou si l'onglet a été mis en veille
+    speedRelax: 2.0,      // vitesse à laquelle une balle revient à sa vitesse de croisière
+                          // après un recul / un grappin (1/s). La vitesse « normale » reste constante.
+    maxSpeed: 1300,       // plafond de sécurité
+    wallJitter: 0.02,     // micro-variation d'angle au rebond (rad) pour éviter les trajectoires
+                          // périodiques où les balles ne se croisent jamais. 0 = rebond parfait.
+    gravity: 0,           // pas de gravité par défaut (unités/s²)
+  },
+
+  contact: {
+    damage: 3,            // dégâts quand les deux balles se percutent (chacune les subit)
+    cooldown: 0.4,
+  },
+
+  fx: {
+    hitParticles: 16,
+    deathParticles: 140,
+    bigHitShake: 9,       // amplitude du tremblement pour les gros coups
+    shakeDecay: 28,       // décroissance du tremblement (unités/s)
+    flashTime: 0.15,
+    victoryDelay: 1.3,    // délai entre la mort et l'écran de victoire
+  },
+
+  // Combattants utilisés pour le match (clés de FIGHTERS, voir plus bas).
+  // On peut aussi les choisir par l'URL : index.html?a=hammer&b=web
+  match: ['web', 'hammer'],
+
+  fighters: {
+    web: {
+      name: 'Balle Toile',
+      color: '#8e1a1a',
+      radius: 42,
+      maxHp: 100,
+      speed: 290,
+      // capacité : fil d'araignée
+      cooldown: 2.0,          // un fil toutes les ~2 s
+      cooldownJitter: 0.3,    // ± aléatoire sur ce délai
+      aimEnemyChance: 0.7,    // probabilité de viser l'adversaire (sinon un mur)
+      aimSpread: 0.12,        // imprécision du tir vers l'adversaire
+      minGrappleDist: 180,    // distance minimale d'un point d'accroche sur un mur
+      threadSpeed: 1700,      // vitesse de la pointe du fil
+      threadColor: '#8fdcff',
+      threadWidth: 5,
+      damage: 5,              // dégâts si le fil touche l'adversaire (3 au départ, monté pour l'équilibrage)
+      slowDuration: 1.5,
+      slowFactor: 0.25,       // l'adversaire ne garde que 25 % de sa vitesse
+      slowAbilityFactor: 0.5, // ... et ses capacités tournent 2x moins vite
+      pullDuration: 0.45,     // durée de la traction du grappin
+      pullAccel: 1500,        // force de traction vers le mur
+      linger: 0.3,            // temps pendant lequel le fil reste accroché
+      fade: 0.25,             // temps de disparition du fil
+    },
+    hammer: {
+      name: 'Balle Marteau',
+      color: '#ff2b2b',
+      radius: 40,
+      maxHp: 100,
+      speed: 290,
+      // capacité : marteau rotatif
+      damage: 8,
+      cooldown: 0.5,
+      knockback: 520,         // vitesse ajoutée à l'adversaire lors d'un coup
+      spin: 3.2,              // vitesse de rotation initiale (rad/s)
+      spinGainPerHit: 1.12,   // multiplicateur de rotation à chaque coup réussi
+      spinMax: 13,
+      reach: 40,              // longueur du manche hors de la balle
+      headHalf: 19,           // demi-longueur de la tête du marteau
+      headThick: 8,           // demi-épaisseur de la tête
+    },
+  },
+};
+
+const STEP = 1 / CONFIG.physics.hz;
+const TAU = Math.PI * 2;
+
+/* -------------------------------------------------------------------------
+ *  Petits utilitaires
+ * ------------------------------------------------------------------------- */
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+// Mélange une couleur avec du blanc (amount > 0) ou du noir (amount < 0).
+function shade(hex, amount) {
+  const [r, g, b] = hexToRgb(hex);
+  const t = amount < 0 ? 0 : 255;
+  const k = Math.abs(amount);
+  const mix = c => Math.round(c + (t - c) * k);
+  return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
+}
+function rgba(hex, a) {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${a})`;
+}
+// Distance d'un point (px, py) au segment [a, b].
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1) : 0;
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+}
+// Angle aléatoire qui évite les directions trop proches des axes
+// (sinon une balle peut faire des allers-retours parfaitement horizontaux).
+function randomDiagonalAngle() {
+  const quadrant = Math.floor(Math.random() * 4);
+  return quadrant * (Math.PI / 2) + rand(0.25, Math.PI / 2 - 0.25);
+}
+
+/* =========================================================================
+ *  Classe de base Ball
+ *  -------------------------------------------------------------------------
+ *  Gère la physique commune (déplacement, rebonds, ralentissement), le rendu
+ *  du corps (dégradé, PV, flash) et expose trois « crochets » à surcharger :
+ *
+ *    update(dt)       -> logique de la capacité, appelée à chaque pas fixe
+ *    draw(ctx)        -> rendu ; appeler super.draw(ctx) pour le corps
+ *    onHit(target)    -> effet appliqué quand la capacité touche l'adversaire
+ *
+ *  ➜ AJOUTER UN NOUVEAU TYPE DE BALLE :
+ *    1. Ajoute un bloc de réglages dans CONFIG.fighters, ex. :
+ *         spike: { name: 'Balle Épine', color: '#2ecc71', radius: 40,
+ *                  maxHp: 100, speed: 230, damage: 5, cooldown: 1 }
+ *    2. Écris une classe qui étend Ball :
+ *         class SpikeBall extends Ball {
+ *           update(dt) { ... détecter un contact, puis this.onHit(opp) ... }
+ *           onHit(target) { this.game.damage(target, this.cfg.damage, this); }
+ *           drawDecoration(ctx) { ... motif dessiné sur la balle ... }
+ *         }
+ *       Outils disponibles : this.game.opponentOf(this), this.game.damage(...),
+ *       this.game.burst(...), this.game.addShake(...), target.applySlow(...),
+ *       this.abilityRate (1, ou moins si la balle est ralentie).
+ *    3. Enregistre-la dans FIGHTERS : FIGHTERS.spike = SpikeBall;
+ *    4. Mets 'spike' dans CONFIG.match (ou ouvre index.html?a=spike&b=web).
+ * ========================================================================= */
+class Ball {
+  constructor(game, cfg) {
+    this.game = game;
+    this.cfg = cfg;
+    this.name = cfg.name;
+    this.color = cfg.color;
+    this.r = cfg.radius;
+    this.maxHp = cfg.maxHp;
+    this.hp = cfg.maxHp;
+    this.baseSpeed = cfg.speed;
+    this.mass = this.r * this.r;
+    this.x = 0; this.y = 0; this.vx = 0; this.vy = 0;
+    this.flash = 0;          // flash blanc après un coup reçu
+    this.slowTimer = 0;      // temps de ralentissement restant
+    this.slowMove = 1;       // facteur de vitesse pendant le ralentissement
+    this.slowAbility = 1;    // facteur des capacités pendant le ralentissement
+    this.contactCd = 0;
+    this.dead = false;
+  }
+
+  get slowed() { return this.slowTimer > 0; }
+  /** Multiplicateur à appliquer aux timers / rotations des capacités. */
+  get abilityRate() { return this.slowed ? this.slowAbility : 1; }
+
+  launch(angle) {
+    this.vx = Math.cos(angle) * this.baseSpeed;
+    this.vy = Math.sin(angle) * this.baseSpeed;
+  }
+
+  applySlow(duration, moveFactor, abilityFactor = 1) {
+    this.slowTimer = Math.max(this.slowTimer, duration);
+    this.slowMove = moveFactor;
+    this.slowAbility = abilityFactor;
+    // ralentissement immédiat pour que l'effet soit bien visible
+    const s = Math.hypot(this.vx, this.vy);
+    const target = this.baseSpeed * moveFactor;
+    if (s > target) { this.vx *= target / s; this.vy *= target / s; }
+  }
+
+  /** Physique commune : appelée par le jeu avant update(). */
+  physics(dt) {
+    const P = CONFIG.physics;
+    const S = CONFIG.arena.size;
+    if (this.slowTimer > 0) this.slowTimer -= dt;
+    if (this.flash > 0) this.flash -= dt;
+    if (this.contactCd > 0) this.contactCd -= dt;
+
+    this.vy += P.gravity * dt;
+
+    // Vitesse de croisière constante : après un recul ou un grappin, la balle
+    // revient progressivement à sa vitesse normale (aucune friction sinon).
+    let s = Math.hypot(this.vx, this.vy);
+    if (s < 1) {
+      const a = randomDiagonalAngle();
+      this.vx = Math.cos(a); this.vy = Math.sin(a); s = 1;
+    }
+    const target = this.baseSpeed * (this.slowed ? this.slowMove : 1);
+    let ns = s + (target - s) * Math.min(1, P.speedRelax * dt);
+    ns = Math.min(ns, P.maxSpeed);
+    this.vx *= ns / s; this.vy *= ns / s;
+
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+
+    // Rebonds parfaitement élastiques sur les murs
+    let bounced = false;
+    if (this.x - this.r < 0) { this.x = this.r; this.vx = Math.abs(this.vx); bounced = true; }
+    if (this.x + this.r > S) { this.x = S - this.r; this.vx = -Math.abs(this.vx); bounced = true; }
+    if (this.y - this.r < 0) { this.y = this.r; this.vy = Math.abs(this.vy); bounced = true; }
+    if (this.y + this.r > S) { this.y = S - this.r; this.vy = -Math.abs(this.vy); bounced = true; }
+    if (bounced && P.wallJitter) this.rotateVelocity(rand(-P.wallJitter, P.wallJitter));
+  }
+
+  rotateVelocity(a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    const vx = this.vx * c - this.vy * s;
+    this.vy = this.vx * s + this.vy * c;
+    this.vx = vx;
+  }
+
+  // ---- crochets à surcharger -------------------------------------------
+  update(dt) {}
+  onHit(target) {}
+  drawDecoration(ctx) {}   // motif dessiné sur le corps, sous les PV
+  drawUnder(ctx) {}        // dessiné sous toutes les balles (fils, traînées...)
+  drawOver(ctx) {}         // dessiné au-dessus du corps (armes)
+
+  // ---- rendu ------------------------------------------------------------
+  draw(ctx) {
+    const { x, y, r } = this;
+
+    // Halo bleu si la balle est ralentie
+    if (this.slowed) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(143,220,255,0.75)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 6]);
+      ctx.lineDashOffset = -this.game.time * 30;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 7, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Corps : dégradé radial (reflet en haut à gauche, ombre en bas à droite)
+    const g = ctx.createRadialGradient(x - r * 0.4, y - r * 0.45, r * 0.08, x, y, r);
+    g.addColorStop(0, shade(this.color, 0.55));
+    g.addColorStop(0.35, this.color);
+    g.addColorStop(1, shade(this.color, -0.6));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fill();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.clip();
+    this.drawDecoration(ctx);
+    ctx.restore();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = shade(this.color, -0.7);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.stroke();
+
+    // Flash blanc
+    if (this.flash > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${0.85 * this.flash / CONFIG.fx.flashTime})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, TAU);
+      ctx.fill();
+    }
+
+    this.drawOver(ctx);
+  }
+
+  drawHp(ctx) {
+    const size = this.r * 0.78;
+    ctx.font = `900 ${size}px "Arial Black", Impact, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = size * 0.22;
+    ctx.strokeStyle = '#000';
+    const txt = String(Math.ceil(this.hp));
+    ctx.strokeText(txt, this.x, this.y + size * 0.04);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(txt, this.x, this.y + size * 0.04);
+  }
+}
+
+/* =========================================================================
+ *  Balle Toile — lance un fil toutes les ~2 s
+ *  - fil sur un mur      : grappin, la balle est tirée vers le point d'accroche
+ *  - fil sur l'adversaire: ralentissement 1,5 s + 3 dégâts
+ * ========================================================================= */
+class WebBall extends Ball {
+  constructor(game, cfg) {
+    super(game, cfg);
+    this.timer = rand(0.6, 1.2);   // premier tir un peu plus tôt
+    this.thread = null;            // { phase, dx, dy, tx, ty, t, target }
+    this.spin = rand(0, TAU);      // rotation du motif de toile
+  }
+
+  update(dt) {
+    const c = this.cfg;
+    // le motif tourne doucement selon la direction horizontale
+    this.spin += this.vx * dt * 0.004;
+
+    if (!this.thread) {
+      this.timer -= dt * this.abilityRate;
+      if (this.timer <= 0) {
+        this.fireThread();
+        this.timer = c.cooldown + rand(-c.cooldownJitter, c.cooldownJitter);
+      }
+    } else {
+      this.updateThread(dt);
+    }
+  }
+
+  fireThread() {
+    const c = this.cfg;
+    const S = CONFIG.arena.size;
+    const opp = this.game.opponentOf(this);
+    let ang;
+    if (opp && Math.random() < c.aimEnemyChance) {
+      ang = Math.atan2(opp.y - this.y, opp.x - this.x) + rand(-c.aimSpread, c.aimSpread);
+    } else {
+      // point aléatoire sur un mur, assez loin pour que le grappin soit visible
+      let px = 0, py = 0;
+      for (let i = 0; i < 12; i++) {
+        const side = Math.floor(Math.random() * 4);
+        const u = rand(0.1, 0.9) * S;
+        [px, py] = [[u, 0], [S, u], [u, S], [0, u]][side];
+        if (Math.hypot(px - this.x, py - this.y) > c.minGrappleDist) break;
+      }
+      ang = Math.atan2(py - this.y, px - this.x);
+    }
+    this.thread = {
+      phase: 'extend',
+      dx: Math.cos(ang), dy: Math.sin(ang),
+      tx: this.x, ty: this.y,
+      t: 0,
+      target: null,
+    };
+  }
+
+  updateThread(dt) {
+    const c = this.cfg;
+    const th = this.thread;
+    const S = CONFIG.arena.size;
+    const opp = this.game.opponentOf(this);
+
+    switch (th.phase) {
+      case 'extend': {
+        const px = th.tx, py = th.ty;
+        let nx = px + th.dx * c.threadSpeed * dt;
+        let ny = py + th.dy * c.threadSpeed * dt;
+
+        // Touche l'adversaire ?
+        if (opp && distToSegment(opp.x, opp.y, px, py, nx, ny) < opp.r) {
+          th.phase = 'enemy';
+          th.t = c.linger;
+          th.target = opp;
+          th.tx = opp.x; th.ty = opp.y;
+          this.onHit(opp);
+          return;
+        }
+
+        // Touche un mur ? On coupe la pointe exactement sur le mur.
+        if (nx < 0 || nx > S || ny < 0 || ny > S) {
+          let k = 1;
+          if (nx < 0) k = Math.min(k, (0 - px) / (nx - px));
+          if (nx > S) k = Math.min(k, (S - px) / (nx - px));
+          if (ny < 0) k = Math.min(k, (0 - py) / (ny - py));
+          if (ny > S) k = Math.min(k, (S - py) / (ny - py));
+          th.tx = px + (nx - px) * k;
+          th.ty = py + (ny - py) * k;
+          th.phase = 'grapple';
+          th.t = c.pullDuration;
+          this.game.burst(th.tx, th.ty, 8, [c.threadColor, '#ffffff'], 140, 2.5);
+          return;
+        }
+        th.tx = nx; th.ty = ny;
+        break;
+      }
+
+      case 'grapple': {
+        // Effet de balancement : la balle est tirée vers le point d'accroche
+        const dx = th.tx - this.x, dy = th.ty - this.y;
+        const d = Math.hypot(dx, dy) || 1;
+        this.vx += (dx / d) * c.pullAccel * dt;
+        this.vy += (dy / d) * c.pullAccel * dt;
+        th.t -= dt;
+        if (th.t <= 0 || d < this.r + 6) { th.phase = 'fade'; th.t = c.fade; }
+        break;
+      }
+
+      case 'enemy': {
+        // Le fil reste collé à l'adversaire un court instant
+        if (th.target && !th.target.dead) { th.tx = th.target.x; th.ty = th.target.y; }
+        th.t -= dt;
+        if (th.t <= 0) { th.phase = 'fade'; th.t = c.fade; }
+        break;
+      }
+
+      case 'fade':
+        th.t -= dt;
+        if (th.t <= 0) this.thread = null;
+        break;
+    }
+  }
+
+  onHit(target) {
+    const c = this.cfg;
+    target.applySlow(c.slowDuration, c.slowFactor, c.slowAbilityFactor);
+    this.game.damage(target, c.damage, this, { color: c.threadColor });
+  }
+
+  drawUnder(ctx) {
+    const th = this.thread;
+    if (!th) return;
+    const c = this.cfg;
+    const alpha = th.phase === 'fade' ? Math.max(0, th.t / c.fade) : 1;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = alpha;
+    // halo
+    ctx.strokeStyle = rgba(c.threadColor, 0.3);
+    ctx.lineWidth = c.threadWidth * 2.6;
+    ctx.beginPath();
+    ctx.moveTo(this.x, this.y);
+    ctx.lineTo(th.tx, th.ty);
+    ctx.stroke();
+    // fil
+    ctx.strokeStyle = c.threadColor;
+    ctx.lineWidth = c.threadWidth;
+    ctx.stroke();
+    // point d'accroche
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(th.tx, th.ty, c.threadWidth * 0.9, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  drawDecoration(ctx) {
+    // Motif de toile d'araignée : rayons + anneaux légèrement affaissés
+    const { x, y, r } = this;
+    const spokes = 8;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(this.spin);
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < spokes; i++) {
+      const a = (i / spokes) * TAU;
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    for (const k of [0.28, 0.52, 0.76, 0.98]) {
+      const rr = r * k;
+      for (let i = 0; i < spokes; i++) {
+        const a0 = (i / spokes) * TAU;
+        const a1 = ((i + 1) / spokes) * TAU;
+        const am = (a0 + a1) / 2;
+        const sag = rr * 0.8; // le milieu de chaque segment s'affaisse vers le centre
+        if (i === 0) ctx.moveTo(Math.cos(a0) * rr, Math.sin(a0) * rr);
+        ctx.quadraticCurveTo(Math.cos(am) * sag, Math.sin(am) * sag,
+                             Math.cos(a1) * rr, Math.sin(a1) * rr);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/* =========================================================================
+ *  Balle Marteau — un marteau tourne en permanence autour de la balle
+ *  Chaque coup : 8 dégâts, gros recul, et la rotation accélère.
+ * ========================================================================= */
+class HammerBall extends Ball {
+  constructor(game, cfg) {
+    super(game, cfg);
+    this.angle = rand(0, TAU);
+    this.spinSpeed = cfg.spin * (Math.random() < 0.5 ? -1 : 1);
+    this.cd = 0;
+  }
+
+  /** Géométrie de l'arme dans le repère monde. */
+  weapon() {
+    const c = this.cfg;
+    const dx = Math.cos(this.angle), dy = Math.sin(this.angle);
+    const px = -dy, py = dx;                 // perpendiculaire
+    const L = this.r + c.reach;
+    const tipX = this.x + dx * L, tipY = this.y + dy * L;
+    return {
+      dx, dy, px, py, tipX, tipY,
+      baseX: this.x + dx * this.r * 0.5, baseY: this.y + dy * this.r * 0.5,
+      headAX: tipX + px * c.headHalf, headAY: tipY + py * c.headHalf,
+      headBX: tipX - px * c.headHalf, headBY: tipY - py * c.headHalf,
+    };
+  }
+
+  update(dt) {
+    const c = this.cfg;
+    this.angle += this.spinSpeed * this.abilityRate * dt;
+    if (this.cd > 0) { this.cd -= dt; return; }
+
+    const opp = this.game.opponentOf(this);
+    if (!opp) return;
+    const w = this.weapon();
+    const dHead = distToSegment(opp.x, opp.y, w.headAX, w.headAY, w.headBX, w.headBY) - c.headThick;
+    const dHandle = distToSegment(opp.x, opp.y, w.baseX, w.baseY, w.tipX, w.tipY) - 4;
+    if (Math.min(dHead, dHandle) < opp.r) this.onHit(opp, w);
+  }
+
+  onHit(target, w = this.weapon()) {
+    const c = this.cfg;
+    this.cd = c.cooldown;
+
+    // Recul : mélange de la direction centre->cible et de la tangente du coup
+    let nx = target.x - this.x, ny = target.y - this.y;
+    const n = Math.hypot(nx, ny) || 1;
+    nx /= n; ny /= n;
+    const sgn = Math.sign(this.spinSpeed);
+    let kx = nx * 0.7 + w.px * sgn * 0.7;
+    let ky = ny * 0.7 + w.py * sgn * 0.7;
+    const k = Math.hypot(kx, ky) || 1;
+    target.vx += (kx / k) * c.knockback;
+    target.vy += (ky / k) * c.knockback;
+
+    // La rotation s'accélère à chaque coup réussi
+    const mag = Math.min(Math.abs(this.spinSpeed) * c.spinGainPerHit, c.spinMax);
+    this.spinSpeed = mag * sgn;
+
+    this.game.damage(target, c.damage, this, {
+      color: '#cfe6ff', big: true, x: w.tipX, y: w.tipY,
+    });
+  }
+
+  drawUnder(ctx) {
+    // traînée de mouvement de la tête quand ça tourne vite
+    const c = this.cfg;
+    const spin = Math.abs(this.spinSpeed * this.abilityRate);
+    if (spin < 3) return;
+    const L = this.r + c.reach;
+    const sweep = clamp(spin * 0.06, 0, 1.2) * Math.sign(this.spinSpeed);
+    ctx.save();
+    ctx.strokeStyle = `rgba(160,200,255,${clamp((spin - 3) / 8, 0, 0.45)})`;
+    ctx.lineWidth = c.headHalf * 1.6;
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, L, this.angle - sweep, this.angle, sweep < 0);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawOver(ctx) {
+    const c = this.cfg;
+    const L = this.r + c.reach;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#13265e';
+    ctx.lineWidth = 3;
+
+    // manche
+    const hg = ctx.createLinearGradient(0, -5, 0, 5);
+    hg.addColorStop(0, '#ffffff');
+    hg.addColorStop(1, '#7fb2ff');
+    ctx.fillStyle = hg;
+    ctx.beginPath();
+    ctx.rect(this.r * 0.15, -4.5, L - this.r * 0.15, 9);
+    ctx.fill();
+    ctx.stroke();
+
+    // tête en croix : barre perpendiculaire + pointe avant
+    const t = c.headThick, h = c.headHalf;
+    const g = ctx.createLinearGradient(L - t, -h, L + t, h);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(1, '#5d93ff');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(L - t, -h);
+    ctx.lineTo(L + t, -h);
+    ctx.lineTo(L + t, -t * 0.6);
+    ctx.lineTo(L + t + 9, -t * 0.6);
+    ctx.lineTo(L + t + 9, t * 0.6);
+    ctx.lineTo(L + t, t * 0.6);
+    ctx.lineTo(L + t, h);
+    ctx.lineTo(L - t, h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // bande bleue décorative
+    ctx.fillStyle = '#2f6bff';
+    ctx.fillRect(L - 2, -h + 3, 4, h * 2 - 6);
+
+    // moyeu central
+    ctx.fillStyle = '#eaf3ff';
+    ctx.beginPath();
+    ctx.arc(0, 0, 7, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/* Registre des types de balles : clé -> classe. Ajoute ici tes nouvelles balles. */
+const FIGHTERS = {
+  web: WebBall,
+  hammer: HammerBall,
+};
+
+/* =========================================================================
+ *  Game — état d'un combat
+ * ========================================================================= */
+class Game {
+  constructor(options = {}) {
+    this.headless = !!options.headless;   // simulation sans effets (tests)
+    this.matchup = options.matchup || CONFIG.match;
+    this.reset();
+  }
+
+  reset() {
+    const S = CONFIG.arena.size;
+    this.time = 0;
+    this.particles = [];
+    this.texts = [];
+    this.shake = 0;
+    this.over = false;        // combat terminé
+    this.winner = null;       // balle gagnante (null = égalité)
+    this.overTimer = 0;
+
+    this.balls = this.matchup.map(key => {
+      const Cls = FIGHTERS[key];
+      if (!Cls) throw new Error(`Type de balle inconnu : ${key}`);
+      return new Cls(this, CONFIG.fighters[key]);
+    });
+
+    // Positions aléatoires sans chevauchement, avec un peu d'espace
+    for (let i = 0; i < this.balls.length; i++) {
+      const b = this.balls[i];
+      for (let tries = 0; tries < 200; tries++) {
+        b.x = rand(b.r + 10, S - b.r - 10);
+        b.y = rand(b.r + 10, S - b.r - 10);
+        const ok = this.balls.slice(0, i).every(o => Math.hypot(o.x - b.x, o.y - b.y) > o.r + b.r + 150);
+        if (ok) break;
+      }
+      b.launch(randomDiagonalAngle());
+    }
+  }
+
+  opponentOf(ball) {
+    for (const b of this.balls) if (b !== ball && !b.dead) return b;
+    return null;
+  }
+
+  alive() { return this.balls.filter(b => !b.dead); }
+
+  /** Inflige des dégâts + effets. opts: { color, big, x, y } */
+  damage(target, amount, source, opts = {}) {
+    if (target.dead || this.over) return;
+    target.hp = Math.max(0, target.hp - amount);
+    target.flash = CONFIG.fx.flashTime;
+
+    const hx = opts.x ?? target.x, hy = opts.y ?? target.y;
+    this.burst(hx, hy, CONFIG.fx.hitParticles * (opts.big ? 1.5 : 1),
+      ['#ffffff', opts.color || '#ffffff', target.color], opts.big ? 320 : 220, 3);
+    if (!this.headless) {
+      this.texts.push({
+        x: target.x + rand(-10, 10), y: target.y - target.r - 6,
+        vy: -70, life: 1, max: 1, text: `-${amount}`, color: opts.color || '#ffffff',
+        size: opts.big ? 30 : 22,
+      });
+    }
+    if (opts.big) this.addShake(CONFIG.fx.bigHitShake);
+
+    if (target.hp <= 0) {
+      target.dead = true;
+      target.thread = null;
+      this.burst(target.x, target.y, CONFIG.fx.deathParticles, [target.color, '#ffffff', shade(target.color, 0.4)], 520, 5);
+      this.addShake(CONFIG.fx.bigHitShake * 2);
+    }
+  }
+
+  addShake(amount) { this.shake = Math.max(this.shake, amount); }
+
+  burst(x, y, count, colors, speed, size) {
+    if (this.headless) return;
+    for (let i = 0; i < count; i++) {
+      const a = rand(0, TAU), s = rand(0.2, 1) * speed;
+      const life = rand(0.35, 0.9);
+      this.particles.push({
+        x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+        life, max: life, size: rand(0.5, 1) * size,
+        color: colors[(Math.random() * colors.length) | 0],
+      });
+    }
+  }
+
+  /** Collision balle-balle élastique selon la normale de contact. */
+  collide(a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const dist = Math.hypot(dx, dy);
+    const minD = a.r + b.r;
+    if (dist >= minD || dist === 0) return;
+    const nx = dx / dist, ny = dy / dist;
+
+    // Séparation proportionnelle aux masses inverses
+    const overlap = minD - dist;
+    const ia = 1 / a.mass, ib = 1 / b.mass;
+    a.x -= nx * overlap * ia / (ia + ib);
+    a.y -= ny * overlap * ia / (ia + ib);
+    b.x += nx * overlap * ib / (ia + ib);
+    b.y += ny * overlap * ib / (ia + ib);
+
+    // Échange de quantité de mouvement le long de la normale
+    const rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+    if (rel < 0) {
+      const j = (-2 * rel) / (ia + ib);
+      a.vx -= j * ia * nx; a.vy -= j * ia * ny;
+      b.vx += j * ib * nx; b.vy += j * ib * ny;
+
+      // Dégâts de contact (avec cooldown)
+      if (a.contactCd <= 0 && b.contactCd <= 0) {
+        a.contactCd = b.contactCd = CONFIG.contact.cooldown;
+        const cx = a.x + nx * a.r, cy = a.y + ny * a.r;
+        this.damage(a, CONFIG.contact.damage, b, { x: cx, y: cy });
+        this.damage(b, CONFIG.contact.damage, a, { x: cx, y: cy });
+      }
+    }
+  }
+
+  /** Un pas fixe de simulation. */
+  update(dt) {
+    this.time += dt;
+
+    if (!this.over) {
+      const live = this.alive();
+      for (const b of live) b.physics(dt);
+      for (let i = 0; i < live.length; i++)
+        for (let j = i + 1; j < live.length; j++) this.collide(live[i], live[j]);
+      for (const b of this.alive()) b.update(dt);
+
+      const remaining = this.alive();
+      if (remaining.length <= 1) {
+        this.over = true;
+        this.winner = remaining[0] || null;
+        this.endTime = this.time;
+      }
+    } else {
+      this.overTimer += dt;
+      // le gagnant continue de rebondir (et d'animer sa capacité) pendant l'écran de victoire
+      for (const b of this.alive()) { b.physics(dt); b.update(dt); }
+    }
+
+    // Effets
+    for (const p of this.particles) {
+      p.life -= dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vx *= 1 - 3 * dt; p.vy *= 1 - 3 * dt;
+    }
+    this.particles = this.particles.filter(p => p.life > 0);
+    for (const t of this.texts) { t.life -= dt; t.y += t.vy * dt; t.vy *= 1 - 1.5 * dt; }
+    this.texts = this.texts.filter(t => t.life > 0);
+    this.shake = Math.max(0, this.shake - CONFIG.fx.shakeDecay * dt);
+  }
+}
+
+/* =========================================================================
+ *  Rendu
+ * ========================================================================= */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const view = { w: 0, h: 0, dpr: 1, scale: 1, ox: 0, oy: 0 };
+
+function resize() {
+  const A = CONFIG.arena;
+  view.dpr = window.devicePixelRatio || 1;
+  view.w = window.innerWidth;
+  view.h = window.innerHeight;
+  canvas.width = Math.round(view.w * view.dpr);
+  canvas.height = Math.round(view.h * view.dpr);
+  canvas.style.width = view.w + 'px';
+  canvas.style.height = view.h + 'px';
+
+  // place pour les noms en haut et l'aide en bas
+  const top = 64, bottom = 64, side = 12;
+  const total = A.size + A.wall * 2;
+  view.scale = Math.max(0.1, Math.min((view.w - side * 2) / total, (view.h - top - bottom) / total));
+  view.ox = (view.w - total * view.scale) / 2 + A.wall * view.scale;
+  view.oy = top + (view.h - top - bottom - total * view.scale) / 2 + A.wall * view.scale;
+}
+
+function drawArena(ctx) {
+  const S = CONFIG.arena.size, w = CONFIG.arena.wall;
+  // sol
+  const fg = ctx.createLinearGradient(0, 0, S, S);
+  fg.addColorStop(0, '#1a2257');
+  fg.addColorStop(1, '#111842');
+  ctx.fillStyle = fg;
+  ctx.fillRect(0, 0, S, S);
+  // quadrillage discret
+  ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 50; i < S; i += 50) {
+    ctx.moveTo(i, 0); ctx.lineTo(i, S);
+    ctx.moveTo(0, i); ctx.lineTo(S, i);
+  }
+  ctx.stroke();
+
+  // murs biseautés : haut/gauche clairs, bas/droite sombres
+  const quad = (pts, color) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(pts[0], pts[1]);
+    for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+    ctx.closePath();
+    ctx.fill();
+  };
+  quad([-w, -w, S + w, -w, S, 0, 0, 0], '#6a7bd6');           // haut
+  quad([-w, -w, 0, 0, 0, S, -w, S + w], '#5263bb');           // gauche
+  quad([-w, S + w, 0, S, S, S, S + w, S + w], '#1d2558');     // bas
+  quad([S + w, -w, S + w, S + w, S, S, S, 0], '#28316c');     // droite
+
+  ctx.strokeStyle = '#070b22';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(-w, -w, S + 2 * w, S + 2 * w);
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.strokeRect(0, 0, S, S);
+}
+
+function drawNames(ctx, game) {
+  const pad = 16;
+  const size = clamp(view.w / 26, 16, 28);
+  ctx.font = `900 ${size}px "Arial Black", Impact, system-ui, sans-serif`;
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+  game.balls.slice(0, 2).forEach((b, i) => {
+    const right = i === 1;
+    ctx.textAlign = right ? 'right' : 'left';
+    const x = right ? view.w - pad : pad;
+    ctx.lineWidth = size * 0.2;
+    ctx.strokeStyle = '#000';
+    ctx.strokeText(b.name, x, pad);
+    ctx.fillStyle = shade(b.color, 0.1);
+    ctx.fillText(b.name, x, pad);
+    // petite barre de vie sous le nom
+    const bw = Math.min(view.w * 0.38, 220), bh = 6;
+    const bx = right ? view.w - pad - bw : pad, by = pad + size * 1.15;
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = b.color;
+    const fw = bw * (b.hp / b.maxHp);
+    ctx.fillRect(right ? bx + bw - fw : bx, by, fw, bh);
+  });
+}
+
+function drawHud(ctx, game, speed, paused) {
+  ctx.font = `600 13px system-ui, sans-serif`;
+  ctx.textBaseline = 'bottom';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(200,210,255,0.6)';
+  ctx.fillText(`Espace : pause  ·  R : rejouer  ·  1/2/3 : vitesse   —   x${speed}   ${game.time.toFixed(1)} s`,
+    view.w / 2, view.h - 10);
+
+  if (paused) {
+    ctx.fillStyle = 'rgba(5,8,25,0.45)';
+    ctx.fillRect(0, 0, view.w, view.h);
+    ctx.font = `900 ${clamp(view.w / 9, 32, 72)}px "Arial Black", Impact, system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = '#000';
+    ctx.strokeText('PAUSE', view.w / 2, view.h / 2);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('PAUSE', view.w / 2, view.h / 2);
+  }
+}
+
+function drawVictory(ctx, game) {
+  const t = game.overTimer - CONFIG.fx.victoryDelay;
+  if (!game.over || t < 0) return;
+  const a = clamp(t / 0.4, 0, 1);
+  ctx.fillStyle = `rgba(5,8,25,${0.6 * a})`;
+  ctx.fillRect(0, 0, view.w, view.h);
+
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  const pop = 1 + 0.25 * Math.max(0, 1 - t / 0.3);
+  const big = clamp(view.w / 10, 30, 76) * pop;
+  const cy = view.h / 2;
+
+  const line = (txt, size, color, y) => {
+    ctx.font = `900 ${size}px "Arial Black", Impact, system-ui, sans-serif`;
+    ctx.lineWidth = size * 0.18;
+    ctx.strokeStyle = '#000';
+    ctx.strokeText(txt, view.w / 2, y);
+    ctx.fillStyle = color;
+    ctx.fillText(txt, view.w / 2, y);
+  };
+  if (game.winner) {
+    line('VICTOIRE !', big, '#ffffff', cy - big * 0.75);
+    line(game.winner.name, big * 0.7, shade(game.winner.color, 0.15), cy + big * 0.25);
+  } else {
+    line('ÉGALITÉ !', big, '#ffffff', cy - big * 0.3);
+  }
+  ctx.font = `600 ${clamp(view.w / 40, 13, 18)}px system-ui, sans-serif`;
+  ctx.fillStyle = 'rgba(220,228,255,0.85)';
+  ctx.fillText(`Combat terminé en ${game.endTime.toFixed(1)} s — appuie sur R pour rejouer`,
+    view.w / 2, cy + big * 1.05);
+  ctx.restore();
+}
+
+function render(game, speed, paused) {
+  const { dpr, scale } = view;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // fond bleu nuit
+  const bg = ctx.createRadialGradient(view.w / 2, view.h / 2, 0, view.w / 2, view.h / 2, Math.max(view.w, view.h) * 0.7);
+  bg.addColorStop(0, '#121a46');
+  bg.addColorStop(1, '#070b22');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, view.w, view.h);
+
+  // monde (avec tremblement d'écran)
+  const sx = game.shake ? rand(-game.shake, game.shake) : 0;
+  const sy = game.shake ? rand(-game.shake, game.shake) : 0;
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (view.ox + sx * scale), dpr * (view.oy + sy * scale));
+
+  drawArena(ctx);
+  const live = game.alive();
+  for (const b of live) b.drawUnder(ctx);
+  for (const b of live) b.draw(ctx);
+  for (const b of live) b.drawHp(ctx);
+
+  for (const p of game.particles) {
+    ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  for (const t of game.texts) {
+    ctx.globalAlpha = clamp(t.life / t.max * 1.5, 0, 1);
+    ctx.font = `900 ${t.size}px "Arial Black", Impact, system-ui, sans-serif`;
+    ctx.lineWidth = t.size * 0.2;
+    ctx.strokeStyle = '#000';
+    ctx.strokeText(t.text, t.x, t.y);
+    ctx.fillStyle = t.color;
+    ctx.fillText(t.text, t.x, t.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // interface (repère écran)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawNames(ctx, game);
+  drawVictory(ctx, game);
+  drawHud(ctx, game, speed, paused);
+}
+
+/* =========================================================================
+ *  Boucle principale : simulation à pas fixe, rendu via requestAnimationFrame
+ * ========================================================================= */
+const params = new URLSearchParams(location.search);
+const matchup = [params.get('a') || CONFIG.match[0], params.get('b') || CONFIG.match[1]]
+  .map((k, i) => (FIGHTERS[k] ? k : CONFIG.match[i]));
+
+let game = new Game({ matchup });
+let speed = 1;
+let paused = false;
+let acc = 0;
+let last = performance.now();
+
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (!paused) {
+    acc += dt * speed;
+    let steps = 0;
+    while (acc >= STEP && steps < CONFIG.physics.maxStepsPerFrame) {
+      game.update(STEP);
+      acc -= STEP;
+      steps++;
+    }
+    if (steps === CONFIG.physics.maxStepsPerFrame) acc = 0;
+  }
+  render(game, speed, paused);
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', resize);
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
+  else if (e.code === 'KeyR') { game = new Game({ matchup }); acc = 0; }
+  else if (e.key === '1') speed = 1;
+  else if (e.key === '2') speed = 2;
+  else if (e.key === '3') speed = 4;
+});
+canvas.addEventListener('pointerdown', () => {
+  if (game.over && game.overTimer > CONFIG.fx.victoryDelay) { game = new Game({ matchup }); acc = 0; }
+});
+
+/* Outil d'équilibrage (console) : BallBattle.simulate(200)
+ * lance N combats sans rendu et affiche les victoires et la durée moyenne. */
+window.BallBattle = {
+  CONFIG, FIGHTERS,
+  get game() { return game; },
+  simulate(n = 100, maxTime = 600, pair = matchup) {
+    const wins = {}, times = [];
+    let timeouts = 0;
+    for (let i = 0; i < n; i++) {
+      const g = new Game({ headless: true, matchup: pair });
+      while (!g.over && g.time < maxTime) g.update(STEP);
+      if (!g.over) { timeouts++; continue; }
+      const k = g.winner ? g.winner.name : 'Égalité';
+      wins[k] = (wins[k] || 0) + 1;
+      times.push(g.endTime);
+    }
+    times.sort((a, b) => a - b);
+    const avg = times.reduce((s, t) => s + t, 0) / (times.length || 1);
+    return {
+      wins, timeouts,
+      avg: +avg.toFixed(1),
+      min: +(times[0] || 0).toFixed(1),
+      median: +(times[times.length >> 1] || 0).toFixed(1),
+      max: +(times[times.length - 1] || 0).toFixed(1),
+    };
+  },
+};
+
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
