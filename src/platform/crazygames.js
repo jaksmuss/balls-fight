@@ -1,0 +1,85 @@
+/* Intégration du SDK CrazyGames (HTML5 v3), sans effet hors de CrazyGames.
+ * Le script du SDK est chargé dans index.html ; s'il est absent ou bloqué,
+ * toutes les fonctions deviennent des no-op. */
+import { setPlatformMuted } from '../audio.js';
+
+let sdk = null;
+let env = 'none';
+let playing = false;
+
+async function safe(fn, fallback = null) {
+  try { return await fn(); } catch (e) { console.warn('[CrazyGames]', e); return fallback; }
+}
+
+export const platform = {
+  get env() { return env; },
+  get onCrazyGames() { return env === 'crazygames'; },
+
+  async init() {
+    const g = window.CrazyGames?.SDK;
+    if (!g) return;
+    await safe(async () => {
+      await g.init();
+      sdk = g;
+      env = g.environment || 'local';
+      if (env === 'disabled') { sdk = null; return; }
+      // réglage « couper le son » de la plateforme
+      const apply = () => setPlatformMuted(!!sdk.game?.settings?.muteAudio);
+      apply();
+      sdk.game.addSettingsChangeListener?.(apply);
+    });
+  },
+
+  loadingStart() { if (sdk) safe(() => sdk.game.loadingStart()); },
+  loadingStop() { if (sdk) safe(() => sdk.game.loadingStop()); },
+
+  gameplayStart() {
+    if (!sdk || playing) return;
+    playing = true;
+    safe(() => sdk.game.gameplayStart());
+  },
+  gameplayStop() {
+    if (!sdk || !playing) return;
+    playing = false;
+    safe(() => sdk.game.gameplayStop());
+  },
+  happytime() { if (sdk) safe(() => sdk.game.happytime()); },
+
+  /** Publicité entre deux combats. Le son est coupé pendant la pub. */
+  midgameAd() {
+    if (!sdk) return Promise.resolve();
+    return new Promise(resolve => {
+      const done = () => { setPlatformMuted(!!sdk.game?.settings?.muteAudio); resolve(); };
+      safe(() => sdk.ad.requestAd('midgame', {
+        adStarted: () => setPlatformMuted(true),
+        adFinished: done,
+        adError: done,
+      })).then(r => { if (r === null) done(); });
+    });
+  },
+
+  /** Pseudo du joueur connecté sur CrazyGames, ou null. */
+  async username() {
+    if (!sdk?.user) return null;
+    const u = await safe(() => sdk.user.getUser());
+    return u?.username || null;
+  },
+
+  /** Lien d'invitation vers une partie privée (null hors CrazyGames). */
+  inviteLink(params) {
+    if (!sdk) return null;
+    try { return sdk.game.inviteLink(params); } catch { return null; }
+  },
+  getInviteParam(name) {
+    if (sdk) {
+      try { const v = sdk.game.getInviteParam(name); if (v) return v; } catch { /* ignoré */ }
+    }
+    return new URLSearchParams(location.search).get(name);
+  },
+
+  /** Langue suggérée par la plateforme (code pays / langue), si disponible. */
+  languageHint() {
+    const info = sdk?.user?.systemInfo;
+    return info?.locale || info?.language || null;
+  },
+};
