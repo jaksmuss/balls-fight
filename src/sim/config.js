@@ -2,7 +2,7 @@
  * Les réglages propres à chaque combattant sont dans son fichier (src/fighters/*.js),
  * et le multiplicateur d'équilibrage auto dans src/sim/balance.js. */
 export const CONFIG = {
-  arena: { size: 600 },
+  arena: { size: 550 },        // 11 × 11 carrés de 50
   hz: 120,                  // pas fixe de la simulation
   physics: {
     speedRelax: 2.0,        // retour à la vitesse de croisière après un recul (1/s)

@@ -70,12 +70,12 @@ export class PainterBall extends Ball {
 }
 
 // ========================================================================= DISCO
-const TILE = 100;
 class DanceFloor extends Entity {
   constructor(world, owner) {
     super(world, owner);
     this.layer = 'floor';
-    this.n = Math.round(world.size / TILE);
+    this.n = 6;
+    this.tile = world.size / this.n;
     this.lit = new Uint8Array(this.n * this.n);
     this.phase = 0;
     this.diesWithOwner = true;
@@ -94,7 +94,7 @@ class DanceFloor extends Entity {
     if (this.phase < 0.5) return; // avertissement
     for (const b of this.world.enemiesOf(o)) {
       if (!b.targetable) continue;
-      const i = M.clamp(M.floor(b.x / TILE), 0, this.n - 1), j = M.clamp(M.floor(b.y / TILE), 0, this.n - 1);
+      const i = M.clamp(M.floor(b.x / this.tile), 0, this.n - 1), j = M.clamp(M.floor(b.y / this.tile), 0, this.n - 1);
       if (this.lit[j * this.n + i] && this.world.cdReady(`disco${o.id}-${b.id}`, 0.35)) {
         this.world.damage(b, 2.5, o, { kind: 'dot', color: `hsl(${this.hue},100%,70%)` });
       }
@@ -102,6 +102,7 @@ class DanceFloor extends Entity {
   }
   draw(ctx) {
     const on = this.phase >= 0.5;
+    const T = this.tile;
     ctx.save();
     for (let j = 0; j < this.n; j++) {
       for (let i = 0; i < this.n; i++) {
@@ -109,11 +110,11 @@ class DanceFloor extends Entity {
         const h = (this.hue + (i + j) * 40) % 360;
         if (on) {
           ctx.fillStyle = `hsla(${h},100%,60%,0.38)`;
-          ctx.fillRect(i * TILE + 2, j * TILE + 2, TILE - 4, TILE - 4);
+          ctx.fillRect(i * T + 2, j * T + 2, T - 4, T - 4);
         } else {
           ctx.strokeStyle = `hsla(${h},100%,70%,0.5)`;
           ctx.lineWidth = 2;
-          ctx.strokeRect(i * TILE + 4, j * TILE + 4, TILE - 8, TILE - 8);
+          ctx.strokeRect(i * T + 4, j * T + 4, T - 8, T - 8);
         }
       }
     }

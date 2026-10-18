@@ -55,7 +55,7 @@ Ouvre plusieurs onglets sur `http://localhost:5173/?net=local` : ils communiquen
 - Équilibrage automatique : `npm run balance` (options `--iter`, `--games`, `--k`). Il simule des milliers de combats et ajuste le multiplicateur de puissance de chaque combattant dans `src/sim/balance.js`, pour viser 50 % de victoires.
 - Durée des combats : `damageScale` dans `src/sim/config.js`.
 
-État actuel (6 400 combats simulés) : tous les combattants sont entre 42 % et 58 % de victoires. En 1V1, la durée médiane est de 51 s, et 90 % des combats durent entre 29 s et 1 min 53.
+État actuel (6 400 combats simulés, avant le passage à une arène de 11 × 11) : tous les combattants sont entre 42 % et 58 % de victoires. En 1V1, la durée médiane est de 51 s, et 90 % des combats durent entre 29 s et 1 min 53.
 
 ## Structure
 
