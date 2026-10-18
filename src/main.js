@@ -7,7 +7,7 @@ import { FIGHTERS, FIGHTER_IDS, getFighter } from './fighters/registry.js';
 import { t, fighterName, fighterDesc, detectLanguage, setLanguage, getLanguage } from './i18n.js';
 import { play, unlockAudio, isMuted, setMuted } from './audio.js';
 import { platform } from './platform/crazygames.js';
-import { OnlineSession, randomCode } from './net/online.js';
+import { OnlineSession, randomCode, GAME_VERSION } from './net/online.js';
 import { randomSeed } from './sim/rng.js';
 
 const canvas = document.getElementById('game');
@@ -108,7 +108,8 @@ function showMenu() {
         button(t('privateRoom'), showPrivate))),
     h('div', { class: 'menu-footer' },
       h('span', { class: 'badge' }, `${FIGHTERS.length} ${t('fighters')}`),
-      langBtn, soundBtn)));
+      langBtn, soundBtn),
+    h('div', { class: 'sub', style: 'font-size:12px;opacity:0.7' }, `v${GAME_VERSION}`)));
 }
 
 // ======================================================================= sélection
@@ -446,7 +447,7 @@ function startOnlineFight(s, info) {
 }
 
 function showOnlineError(s) {
-  const msg = s.error === 'room-full' ? '🚫' : t('onlineUnavailable');
+  const msg = s.error === 'room-full' ? t('roomFull') : s.error === 'room-not-found' ? t('roomNotFound') : t('onlineUnavailable');
   setScreen('error', h('div', { class: 'overlay' },
     h('div', { class: 'panel' },
       h('h2', {}, t('online')),

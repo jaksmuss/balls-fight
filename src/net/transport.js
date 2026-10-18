@@ -16,18 +16,48 @@
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 
 // ------------------------------------------------------------- Supabase
-class SupabaseChannel {
+/* Les membres d'un canal sont connus de deux façons, fusionnées :
+ *  - la « présence » Supabase ;
+ *  - un battement de cœur diffusé toutes les 1,5 s (plus robuste : si la présence
+ *    est lente ou indisponible, les joueurs se voient quand même). */
+const HEARTBEAT = 1500;
+const PEER_TIMEOUT = 5000;
+
+export class SupabaseChannel {
   constructor(client, name, key) {
     this.client = client;
-    this.ch = client.channel(name, { config: { presence: { key }, broadcast: { self: false } } });
+    this.key = key;
+    this.meta = null;
+    this.peers = new Map();
     this.presenceCb = null;
-    this.ch.on('presence', { event: 'sync' }, () => this.presenceCb?.(this.members()));
+    this.ch = client.channel(name, { config: { presence: { key }, broadcast: { self: false } } });
+    this.ch.on('presence', { event: 'sync' }, () => this.emit());
+    this.ch.on('broadcast', { event: '_hb' }, ({ payload }) => {
+      if (!payload || payload.key === this.key) return;
+      const prev = this.peers.get(payload.key);
+      this.peers.set(payload.key, { meta: payload.meta, seen: Date.now() });
+      if (!prev || JSON.stringify(prev.meta) !== JSON.stringify(payload.meta)) this.emit();
+    });
+    this.ch.on('broadcast', { event: '_bye' }, ({ payload }) => {
+      if (payload && this.peers.delete(payload.key)) this.emit();
+    });
+    this.ch.on('broadcast', { event: '_q' }, () => this.announce());
   }
   on(event, cb) { this.ch.on('broadcast', { event }, msg => cb(msg.payload)); }
   onPresence(cb) { this.presenceCb = cb; }
+  emit() { this.presenceCb?.(this.members()); }
   members() {
-    const st = this.ch.presenceState();
-    return Object.entries(st).map(([key, metas]) => ({ key, ...metas[metas.length - 1] }));
+    const byKey = new Map();
+    for (const [key, metas] of Object.entries(this.ch.presenceState())) {
+      const m = metas[metas.length - 1];
+      if (m) byKey.set(key, { key, ...m });
+    }
+    for (const [key, p] of this.peers) byKey.set(key, { key, ...p.meta });
+    if (this.meta) byKey.set(this.key, { key: this.key, ...this.meta });
+    return [...byKey.values()];
+  }
+  announce() {
+    if (this.meta) this.ch.send({ type: 'broadcast', event: '_hb', payload: { key: this.key, meta: this.meta } }).catch(() => {});
   }
   subscribe() {
     return new Promise((resolve, reject) => {
@@ -35,16 +65,34 @@ class SupabaseChannel {
       const timer = setTimeout(() => { if (!done) { done = true; reject(new Error('TIMED_OUT')); } }, 10000);
       this.ch.subscribe(status => {
         if (done) return;
-        if (status === 'SUBSCRIBED') { done = true; clearTimeout(timer); resolve(); }
-        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        if (status === 'SUBSCRIBED') {
+          done = true;
+          clearTimeout(timer);
+          this.ch.send({ type: 'broadcast', event: '_q', payload: {} }).catch(() => {});
+          this.timer = setInterval(() => {
+            this.announce();
+            const now = Date.now();
+            let changed = false;
+            for (const [k, p] of this.peers) if (now - p.seen > PEER_TIMEOUT) { this.peers.delete(k); changed = true; }
+            if (changed) this.emit();
+          }, HEARTBEAT);
+          resolve();
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           done = true; clearTimeout(timer); reject(new Error(status));
         }
       });
     });
   }
-  track(meta) { return this.ch.track(meta); }
+  async track(meta) {
+    this.meta = meta;
+    this.announce();
+    this.emit();
+    try { await this.ch.track(meta); } catch (e) { console.warn('[online] présence indisponible', e); }
+  }
   send(event, payload) { return this.ch.send({ type: 'broadcast', event, payload }); }
   close() {
+    clearInterval(this.timer);
+    try { this.ch.send({ type: 'broadcast', event: '_bye', payload: { key: this.key } }); } catch { /* ignoré */ }
     try { this.ch.untrack(); } catch { /* ignoré */ }
     this.client.removeChannel(this.ch);
   }

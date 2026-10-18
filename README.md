@@ -40,7 +40,9 @@ La simulation est **entièrement déterministe**. Avec la même graine et les m�
 - **Choix des combattants** : 20 s. Un joueur absent ou parti est remplacé par l'IA.
 - **Parties privées** : code à 5 caractères, ou lien d'invitation. L'hôte peut lancer avec des IA aux places vides.
 - **Contrôle de désynchronisation** : une empreinte de l'état est échangée toutes les 5 s, et un indicateur s'affiche en cas d'écart.
-- **Versions** : seuls les joueurs ayant exactement le même build se rencontrent (identifiant de build dans le nom des canaux).
+- **Versions** : seuls les joueurs ayant la même version du jeu se rencontrent. Cette version (affichée en bas du menu) combine le numéro du `package.json` et une empreinte des données de jeu ; elle ne dépend pas du moment du build.
+- **Détection des joueurs** : la présence Supabase est doublée d'un signal envoyé toutes les 1,5 s par chaque joueur.
+- **Parties privées** : rejoindre un code qui n'existe pas affiche « partie introuvable ».
 
 Serveur : **Supabase Realtime** (canaux publics, aucune table). Le projet et la clé *publishable* sont dans `src/net/config.js`. Pour utiliser un autre projet Supabase, copier `.env.example` en `.env` et le remplir.
 

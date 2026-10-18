@@ -17,14 +17,27 @@ import { getTransport } from './transport.js';
 import { PROTOCOL } from './config.js';
 import { FIGHTER_IDS, hasFighter } from '../fighters/registry.js';
 import { randomSeed } from '../sim/rng.js';
+import { POWER } from '../sim/balance.js';
+import { CONFIG } from '../sim/config.js';
 
-const BUILD = typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev';
+/* Version du jeu : numéro du package + empreinte des données de jeu (combattants,
+ * équilibrage, réglages). Deux copies du même code donnent toujours la même version,
+ * quel que soit le moment ou l'endroit du build ; deux versions différentes ne se
+ * rencontrent jamais (elles calculeraient des combats différents). */
+function fnv(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36);
+}
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0';
+export const GAME_VERSION = `${APP_VERSION}-${fnv(JSON.stringify([FIGHTER_IDS, POWER, CONFIG]))}`;
+const ROOM_LOOKUP = 5000;     // délai pour trouver le créateur d'une partie privée (ms)
 const PICK_TIME = 20000;      // durée du choix des combattants (ms)
 const JOIN_GRACE = 6000;      // délai pour que tous rejoignent le salon (ms)
 const START_DELAY = 3200;     // compte à rebours avant le combat (ms)
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-const chanName = (kind, id) => `${PROTOCOL}-${BUILD}-${kind}-${id}`;
+const chanName = (kind, id) => `${PROTOCOL}-${GAME_VERSION}-${kind}-${id}`;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
 export function randomCode() {
@@ -118,11 +131,23 @@ export class OnlineSession {
     return this.joinPrivate(this.code, mode);
   }
 
+  /** mode renseigné = création de la partie ; sinon on rejoint une partie existante. */
   async joinPrivate(code, mode = null) {
-    this.code = code.toUpperCase();
+    this.code = code.trim().toUpperCase();
     this.mode = mode;
     this.isPrivate = true;
-    this.enterRoom('P' + this.code, null);
+    this.creator = !!mode;
+    await this.enterRoom('P' + this.code, null);
+    if (!this.creator && this.phase === 'room') {
+      // la partie doit exister : son créateur doit être présent
+      const t0 = Date.now();
+      const check = setInterval(() => {
+        if (this.phase !== 'room' || !this.room) { clearInterval(check); return; }
+        if (this.room.members().some(m => m.creator && m.id !== this.id)) { clearInterval(check); return; }
+        if (Date.now() - t0 > ROOM_LOOKUP) { clearInterval(check); this.fail(new Error('room-not-found')); }
+      }, 250);
+      this.timers.push(check);
+    }
   }
 
   // ----------------------------------------------------------- salon
@@ -152,7 +177,7 @@ export class OnlineSession {
     if (!this.room) return Promise.resolve();
     return this.room.track({
       id: this.id, name: this.name, t: this.roomJoinedAt,
-      pick: this.myPick, ready: this.ready, mode: this.mode,
+      pick: this.myPick, ready: this.ready, mode: this.mode, creator: !!this.creator, v: GAME_VERSION,
     });
   }
 
@@ -179,9 +204,10 @@ export class OnlineSession {
     let order;
     if (this.fixed) order = this.fixed.map(m => m.id);
     else {
-      // partie privée : ordre d'arrivée ; le mode est celui du créateur
-      const sorted = [...present].sort((a, b) => a.t - b.t || (a.id < b.id ? -1 : 1));
-      if (!this.mode) this.mode = sorted.find(m => m.mode)?.mode || '1v1';
+      // partie privée : le créateur d'abord (il est l'hôte), puis l'ordre d'arrivée ;
+      // le mode est celui du créateur
+      const sorted = [...present].sort((a, b) => (b.creator ? 1 : 0) - (a.creator ? 1 : 0) || a.t - b.t || (a.id < b.id ? -1 : 1));
+      if (!this.mode) this.mode = sorted.find(m => m.creator)?.mode || sorted.find(m => m.mode)?.mode || '1v1';
       order = sorted.slice(0, this.size).map(m => m.id);
       // trop de monde : l'hôte renvoie les derniers arrivés
       if (sorted.length > this.size && order[0] === this.id) {
