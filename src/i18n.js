@@ -69,6 +69,7 @@ const STRINGS = {
     tapToContinue: 'Touchez pour continuer',
     controlsHint: 'Espace : pause · 1/2/3 : vitesse · Échap : quitter',
     level: 'Niv.',
+    play: 'JOUER',
     achievements: 'Succès',
     style: 'Style',
     levelUp: 'NIVEAU {n} !',
@@ -154,6 +155,7 @@ const STRINGS = {
     tapToContinue: 'Tap to continue',
     controlsHint: 'Space: pause · 1/2/3: speed · Esc: quit',
     level: 'Lvl',
+    play: 'PLAY',
     achievements: 'Achievements',
     style: 'Style',
     levelUp: 'LEVEL {n}!',
@@ -175,10 +177,15 @@ const STRINGS = {
 let lang = 'en';
 const listeners = new Set();
 
-export function detectLanguage(hint) {
+/**
+ * Langue : choix enregistré du joueur, sinon `locale` fournie par CrazyGames, sinon
+ * (hors CrazyGames) la langue du navigateur ; anglais par défaut.
+ */
+export function detectLanguage(hint, onPlatform = false) {
   let saved = null;
   try { saved = localStorage.getItem('bf-lang'); } catch { /* stockage indisponible */ }
-  const src = (saved || hint || (typeof navigator !== 'undefined' ? navigator.language : '') || 'en').toLowerCase();
+  const nav = !onPlatform && typeof navigator !== 'undefined' ? navigator.language : '';
+  const src = (saved || hint || nav || 'en').toLowerCase();
   setLanguage(src.startsWith('fr') ? 'fr' : 'en', false);
 }
 

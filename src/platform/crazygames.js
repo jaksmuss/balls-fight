@@ -121,7 +121,9 @@ export const platform = {
 
   /** Langue suggérée par la plateforme (code pays / langue), si disponible. */
   languageHint() {
-    const info = sdk?.user?.systemInfo;
-    return info?.locale || info?.language || null;
+    try {
+      const info = sdk?.user?.systemInfo;
+      return info?.locale || info?.language || null;
+    } catch { return null; }
   },
 };

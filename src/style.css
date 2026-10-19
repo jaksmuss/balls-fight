@@ -81,7 +81,11 @@ button {
 .screen.dim { background: radial-gradient(ellipse at center, rgba(7, 10, 32, 0.55), rgba(7, 10, 32, 0.88)); }
 
 /* ------------------------------------------------------------- menu */
-.menu { justify-content: center; gap: 18px; }
+.menu { justify-content: flex-start; gap: 18px; }
+/* centrage vertical qui ne coupe pas le haut quand l'écran est trop petit (on défile) */
+.menu > :first-child { margin-top: auto; }
+.menu > :last-child { margin-bottom: auto; }
+.play-btn { min-width: 220px; font-size: 26px; padding: 12px 28px; }
 .logo {
   font-family: var(--font-title);
   font-size: clamp(44px, 11vw, 96px);
@@ -380,3 +384,25 @@ button {
 .chip small { font-size: 11px; font-weight: 600; color: var(--muted); }
 .chip.active { border-color: var(--gold); color: var(--gold); }
 .chip.locked { opacity: 0.55; cursor: default; }
+
+/* écrans bas (iframes 16:9 jusqu à 760 px de haut) : menu compact */
+@media (max-height: 760px) {
+  .screen { padding: 10px 16px; }
+  .menu { gap: 8px; }
+  .logo { font-size: clamp(30px, 9vh, 52px); -webkit-text-stroke: 2px #000; text-shadow: 0 3px 0 #000; }
+  .logo br { display: none; }
+  .logo span { margin-left: 0.25em; }
+  .tagline { display: none; }
+  .player-card { padding: 6px 12px; }
+  .lvl-badge { width: 42px; height: 42px; font-size: 18px; }
+  .menu-group { padding: 10px; gap: 8px; }
+  .menu-group h2 { font-size: 18px; }
+  .btn { min-height: 38px; padding: 7px 14px; font-size: 15px; }
+  .play-btn { font-size: 22px; padding: 8px 24px; min-width: 200px; }
+  .select { gap: 8px; }
+  .slot .thumb { width: 42px; height: 42px; }
+  .slot { padding: 5px 8px; }
+  .info { min-height: 48px; padding: 6px 12px; }
+  .big-title { font-size: clamp(36px, 12vh, 80px); }
+  .overlay { gap: 8px; }
+}

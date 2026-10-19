@@ -107,6 +107,7 @@ function showMenu() {
   setScreen('menu', h('div', { class: 'screen dim menu' },
     h('h1', { class: 'logo', html: 'BALLS<br><span>FIGHT</span>' }),
     h('p', { class: 'tagline' }, t('tagline')),
+    button(`▶ ${t('play')}`, quickPlay, 'btn primary play-btn'),
     playerCard(),
     h('div', { class: 'menu-footer' },
       button(`🏆 ${t('achievements')} ${ach.done}/${ach.total}`, showAchievements),
@@ -275,7 +276,6 @@ function showFightBar(online) {
   setScreen('fight', h('div', { class: 'fight-bar' },
     online ? null : speedBtns, pauseBtn, button('✕ ' + t('quit'), quit, 'btn small'), desyncEl));
   keyHandler = e => {
-    if (e.code === 'Escape') quit();
     if (online) return;
     if (e.code === 'Space') { togglePause(); e.preventDefault(); }
     const idx = { Digit1: 0, Digit2: 1, Digit3: 2 }[e.code];
@@ -619,6 +619,8 @@ function showPrivate() {
 }
 
 function createPrivate(mode) {
+  if (!demo) startDemo();
+  platform.gameplayStop();
   const s = newSession();
   s.code = randomCode();
   showInvite(s);
@@ -626,6 +628,8 @@ function createPrivate(mode) {
 }
 
 function joinPrivate(code) {
+  if (!demo) startDemo();
+  platform.gameplayStop();
   const s = newSession();
   s.joinPrivate(code);
 }
@@ -664,7 +668,7 @@ function showInvite(s) {
 async function boot() {
   platform.loadingStart();
   await platform.init();
-  detectLanguage(platform.languageHint());
+  detectLanguage(platform.languageHint(), platform.onCrazyGames);
   loadProgress();
   try {
     playerName = (await platform.username()) || localStorage.getItem('bf-name') || '';
@@ -683,6 +687,7 @@ async function boot() {
   renderer.resize();
   requestAnimationFrame(frame);
   platform.loadingStop();
+  const firstVisit = progress().fights === 0;
 
   // un ami nous rejoint ou nous invite alors que le jeu est déjà ouvert
   platform.onJoinRoom(params => {
@@ -694,6 +699,13 @@ async function boot() {
   if (isRoomCode(code)) joinPrivate(code);
   // lancé depuis la page multijoueur de CrazyGames : directement dans une partie privée
   else if (platform.isInstantMultiplayer()) createPrivate('1v1');
+  // nouveau joueur : directement dans un combat (les menus viennent après)
+  else if (firstVisit) quickPlay();
+}
+
+/** Combat local 1V1 immédiat avec deux balles au hasard (un seul clic depuis le menu). */
+function quickPlay() {
+  startLocalFight(1, [randomFighter(), randomFighter()]);
 }
 
 boot();

@@ -63,7 +63,10 @@ export class Renderer {
     this.canvas.style.height = v.h + 'px';
     const S = this.world ? this.world.size : 600;
     const wall = 22;
-    const top = v.w < 600 ? 92 : 84, bottom = 46, side = 10;
+    // marges du HUD (noms en haut, boutons en bas), réduites sur les écrans bas
+    const short = v.h < 600;
+    const duo = (this.world?.teamSize || 1) > 1;
+    const top = v.w < 600 ? 92 : short && !duo ? 62 : short ? 80 : 84, bottom = short ? 42 : 46, side = 10;
     const total = S + wall * 2;
     v.wall = wall;
     v.scale = Math.max(0.1, Math.min((v.w - side * 2) / total, (v.h - top - bottom) / total));
