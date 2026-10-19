@@ -129,7 +129,8 @@ function showMenu() {
     h('div', { class: 'menu-footer' },
       h('span', { class: 'badge' }, `${FIGHTERS.length} ${t('fighters')}`),
       langBtn, soundBtn),
-    h('div', { class: 'sub', style: 'font-size:12px;opacity:0.7' }, `v${GAME_VERSION}`)));
+    h('div', { class: 'sub', style: 'font-size:12px;opacity:0.75' },
+      t('privacyNotice'), ' ', h('button', { class: 'privacy-link', onclick: showPrivacy }, t('privacy')), ` · v${GAME_VERSION}`)));
 }
 
 // ======================================================================= sélection
@@ -371,6 +372,15 @@ function progressSummary(r) {
   return h('div', { class: 'prog-summary' },
     h('div', { class: 'xp-line' }, h('span', { class: 'lvl-badge small' }, h('small', {}, t('level')), String(pr.level)), bar, h('b', { class: 'xp-gain' }, `+${r.xp} XP`)),
     items);
+}
+
+/** Notice de confidentialité (simple panneau, sans bloquer le jeu). */
+function showPrivacy() {
+  setScreen('privacy', h('div', { class: 'overlay' },
+    h('div', { class: 'panel' },
+      h('h2', {}, t('privacyTitle')),
+      h('div', { class: 'privacy-text' }, t('privacyBody').map(p => h('p', {}, p))),
+      button(t('back'), showMenu))));
 }
 
 function showAchievements() {
@@ -684,6 +694,15 @@ async function boot() {
 
   window.addEventListener('resize', () => renderer.resize());
   window.addEventListener('pointerdown', unlockAudio);
+  // iOS : la reprise du son doit se faire pendant un geste (touchend / clic)
+  window.addEventListener('touchend', unlockAudio);
+  window.addEventListener('click', unlockAudio);
+  // connexion au compte CrazyGames en cours de partie : pseudo et progression du compte
+  platform.onAuthChange(async user => {
+    if (user?.username) playerName = user.username;
+    loadProgress();
+    if (screen === 'menu') showMenu();
+  });
   window.addEventListener('keydown', e => { unlockAudio(); keyHandler?.(e); });
   document.fonts?.load?.('20px "Lilita One"').catch(() => {});
 

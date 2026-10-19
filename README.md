@@ -30,6 +30,10 @@ Ce qui est déjà intégré (`src/platform/crazygames.js`) :
 - **tailles d'écran** : mise en page vérifiée de 800×450 à 1920×1080 (densité de pixels 1), sans touche réservée (Échap n'est pas utilisée) ;
 - **sitelock** (`src/platform/sitelock.js`) : en production, le jeu ne démarre que sur les domaines CrazyGames et en local. Pour l'héberger aussi sur ton site, ajoute son domaine dans `VITE_ALLOWED_HOSTS` (voir `.env.example`) ;
 - **correctifs navigateur** (`src/platform/browserFixes.js`) : pas de défilement de la page avec la molette, les flèches ou Espace, pas de menu au clic droit, son coupé en arrière-plan ;
+- **taille** : ~120 Ko compressés (limite mobile : 20 Mo), 4 fichiers, chemins relatifs ;
+- **mobile** : sélection / loupe / menu de maintien désactivés (`user-select: none`), marges des zones sûres (`env(safe-area-inset-*)`) dans l'application CrazyGames, reprise du son sur iOS au premier toucher ;
+- **compte** : pseudo et progression rechargés si le joueur se connecte à CrazyGames en cours de partie (`addAuthListener`) ;
+- **confidentialité** : notice non bloquante en bas du menu et panneau « Confidentialité » (données partagées en ligne, serveur temps réel) ;
 - **pseudos CrazyGames** affichés en jeu. Lors de l'envoi, indiquer des salons de **2 (1V1) et 4 joueurs (2V2)** ;
 
 - le SDK v3 est chargé dans `index.html` ;

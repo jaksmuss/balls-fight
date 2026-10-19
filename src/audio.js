@@ -27,8 +27,11 @@ function ensure() {
 
 /** À appeler sur un geste utilisateur (clic, touche) pour débloquer l'audio. */
 export function unlockAudio() {
+  if (backgroundMuted) return;
   const c = ensure();
-  if (c && c.state === 'suspended') c.resume();
+  // iOS met le contexte en « interrupted » (appel, arrière-plan) puis « suspended » :
+  // il ne peut être relancé que pendant un geste de l'utilisateur
+  if (c && (c.state === 'suspended' || c.state === 'interrupted')) c.resume().catch(() => {});
 }
 
 export function isMuted() { return muted; }

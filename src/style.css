@@ -1,4 +1,9 @@
 :root {
+  /* zones sûres (encoche, barre système) dans l'application CrazyGames */
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
   --bg: #070a20;
   --panel: rgba(16, 22, 60, 0.92);
   --panel-2: rgba(30, 40, 96, 0.9);
@@ -22,7 +27,12 @@ html, body {
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 canvas#game { position: fixed; inset: 0; display: block; touch-action: manipulation; }
 #ui { position: fixed; inset: 0; pointer-events: none; }
@@ -78,7 +88,7 @@ button {
   align-items: center;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px;
+  padding: calc(16px + var(--sat)) calc(16px + var(--sar)) calc(16px + var(--sab)) calc(16px + var(--sal));
 }
 .screen.dim { background: radial-gradient(ellipse at center, rgba(7, 10, 32, 0.55), rgba(7, 10, 32, 0.88)); }
 
@@ -219,7 +229,7 @@ button {
 .fight-bar {
   position: absolute;
   left: 50%;
-  bottom: 6px;
+  bottom: calc(6px + var(--sab));
   transform: translateX(-50%);
   display: flex;
   gap: 6px;
@@ -389,7 +399,7 @@ button {
 
 /* écrans bas (iframes 16:9 jusqu à 760 px de haut) : menu compact */
 @media (max-height: 760px) {
-  .screen { padding: 10px 16px; }
+  .screen { padding: calc(10px + var(--sat)) calc(16px + var(--sar)) calc(10px + var(--sab)) calc(16px + var(--sal)); }
   .menu { gap: 8px; }
   .logo { font-size: clamp(30px, 9vh, 52px); -webkit-text-stroke: 2px #000; text-shadow: 0 3px 0 #000; }
   .logo br { display: none; }
@@ -408,3 +418,11 @@ button {
   .big-title { font-size: clamp(36px, 12vh, 80px); }
   .overlay { gap: 8px; }
 }
+
+/* champs de saisie : la sélection reste possible (code de partie, recherche) */
+input, textarea { -webkit-user-select: text; user-select: text; }
+
+/* confidentialité */
+.privacy-link { background: none; border: none; color: var(--muted); font-size: 12px; text-decoration: underline; cursor: pointer; padding: 4px; }
+.privacy-text { text-align: left; font-size: 14px; line-height: 1.45; color: #d5dbff; max-height: 60vh; overflow-y: auto; }
+.privacy-text p { margin: 0 0 10px; }

@@ -64,14 +64,20 @@ export class Renderer {
     const S = this.world ? this.world.size : 600;
     const wall = 22;
     // marges du HUD (noms en haut, boutons en bas), réduites sur les écrans bas
+    // zones sûres (encoche...) lues depuis les variables CSS
+    const cs = getComputedStyle(document.documentElement);
+    const px = n => parseFloat(cs.getPropertyValue(n)) || 0;
+    v.safe = { t: px('--sat'), r: px('--sar'), b: px('--sab'), l: px('--sal') };
     const short = v.h < 600;
     const duo = (this.world?.teamSize || 1) > 1;
     const top = v.w < 600 ? 92 : short && !duo ? 62 : short ? 80 : 84, bottom = short ? 42 : 46, side = 10;
     const total = S + wall * 2;
     v.wall = wall;
-    v.scale = Math.max(0.1, Math.min((v.w - side * 2) / total, (v.h - top - bottom) / total));
-    v.ox = (v.w - total * v.scale) / 2 + wall * v.scale;
-    v.oy = top + (v.h - top - bottom - total * v.scale) / 2 + wall * v.scale;
+    const sf = v.safe;
+    const availW = v.w - side * 2 - sf.l - sf.r, availH = v.h - top - bottom - sf.t - sf.b;
+    v.scale = Math.max(0.1, Math.min(availW / total, availH / total));
+    v.ox = sf.l + (v.w - sf.l - sf.r - total * v.scale) / 2 + wall * v.scale;
+    v.oy = sf.t + top + (availH - total * v.scale) / 2 + wall * v.scale;
   }
 
   /** Multiplicateur de temps de simulation (arrêt sur coup, ralenti final). */
@@ -600,7 +606,12 @@ export class Renderer {
 
   /** Noms et barres de vie des équipes en haut de l'écran. */
   drawHud(ctx) {
-    const v = this.view, w = this.world;
+    const v0 = this.view, w = this.world;
+    // dans les zones sûres : décalage + largeur utile
+    const sf = v0.safe || { t: 0, r: 0, b: 0, l: 0 };
+    const v = { w: v0.w - sf.l - sf.r };
+    ctx.save();
+    ctx.translate(sf.l, sf.t);
     const mains = w.mainBalls;
     const pad = 12;
     const narrow = v.w < 600;
@@ -648,5 +659,6 @@ export class Renderer {
         ctx.restore();
       });
     }
+    ctx.restore();
   }
 }

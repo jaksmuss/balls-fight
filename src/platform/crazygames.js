@@ -60,6 +60,11 @@ export const platform = {
   },
 
   /** Pseudo du joueur connecté sur CrazyGames, ou null. */
+  /** Connexion / déconnexion du compte CrazyGames en cours de partie : cb(user|null). */
+  onAuthChange(cb) {
+    try { sdk?.user?.addAuthListener?.(u => cb(u || null)); } catch (e) { console.warn('[CrazyGames]', e); }
+  },
+
   async username() {
     if (!sdk?.user) return null;
     const u = await safe(() => sdk.user.getUser());
