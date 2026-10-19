@@ -40,6 +40,16 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const chanName = (kind, id) => `${PROTOCOL}-${GAME_VERSION}-${kind}-${id}`;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
+// ------------------------------------------------------------- validation
+/* Les canaux sont publics : n'importe qui peut y envoyer des messages. Tout ce qui est
+ * reçu est donc vérifié avant usage (types, tailles, combattants existants, expéditeur). */
+const MAX_NAME = 20;
+const RATE_LIMIT = 15;  // messages par seconde et par expéditeur au-delà desquels on ignore
+const isId = v => typeof v === 'string' && /^[a-z0-9]{4,32}$/.test(v);
+const cleanName = v => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_NAME) : '') || '?';
+const cleanInt = (v, lo, hi, def) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : def);
+export const isRoomCode = v => typeof v === 'string' && /^[A-Z0-9]{4,6}$/.test(v.trim().toUpperCase());
+
 export function randomCode() {
   let s = '';
   for (let i = 0; i < 5; i++) s += CODE_CHARS[(Math.random() * CODE_CHARS.length) | 0];
@@ -69,7 +79,21 @@ export class OnlineSession {
     this.desync = false;
     this.notices = [];
     this.timers = [];
+    this.rate = new Map();
   }
+
+  /** Anti-spam : faux si l'expéditeur dépasse RATE_LIMIT messages par seconde. */
+  allow(from) {
+    if (!isId(from)) return false;
+    const now = Date.now();
+    const r = this.rate.get(from) || { t: now, n: 0 };
+    if (now - r.t > 1000) { r.t = now; r.n = 0; }
+    r.n++;
+    this.rate.set(from, r);
+    return r.n <= RATE_LIMIT;
+  }
+  /** Envoie un message signé de mon identifiant. */
+  send(ch, event, payload) { return ch?.send(event, { ...payload, from: this.id }); }
 
   get size() { return this.mode === '2v2' ? 4 : 2; }
   emit() { this.onUpdate?.(this); }
@@ -88,7 +112,7 @@ export class OnlineSession {
     this.emit();
     try {
       const ch = this.queue = await getTransport().channel(chanName('queue', mode), this.id);
-      ch.on('match', p => this.onMatch(p));
+      ch.on('match', p => this.onMatchMsg(p));
       ch.onPresence(list => this.onQueuePresence(list));
       await ch.subscribe();
       if (this.phase !== 'queue') return;
@@ -111,11 +135,19 @@ export class OnlineSession {
       if (group[0].id !== this.id) continue;
       if (this.lastMatchSent && Date.now() - this.lastMatchSent < 3000) return;
       this.lastMatchSent = Date.now();
-      const payload = { room: uid(), members: group.map(m => ({ id: m.id, name: m.name })) };
-      this.queue.send('match', payload);
+      const payload = { room: uid(), members: group.map(m => ({ id: m.id, name: cleanName(m.name) })) };
+      this.send(this.queue, 'match', payload);
       this.onMatch(payload);
       return;
     }
+  }
+
+  /** Message « match » reçu : il doit venir du premier membre du groupe annoncé. */
+  onMatchMsg(p) {
+    if (!p || !this.allow(p.from) || !isId(p.room) || !Array.isArray(p.members)) return;
+    if (p.members.length !== this.size || !p.members.every(m => m && isId(m.id))) return;
+    if (p.members[0].id !== p.from) return;
+    this.onMatch({ room: p.room, members: p.members.map(m => ({ id: m.id, name: cleanName(m.name) })) });
   }
 
   onMatch(p) {
@@ -134,6 +166,7 @@ export class OnlineSession {
 
   /** mode renseigné = création de la partie ; sinon on rejoint une partie existante. */
   async joinPrivate(code, mode = null) {
+    if (!isRoomCode(code)) { this.fail(new Error('room-not-found')); return; }
     this.code = code.trim().toUpperCase();
     this.mode = mode;
     this.isPrivate = true;
@@ -161,12 +194,15 @@ export class OnlineSession {
     this.myPick = null;
     this.ready = false;
     this.started = false;
+    this.firstSeen = null;
     this.emit();
     try {
       const ch = this.room = await getTransport().channel(chanName('room', roomId), this.id);
-      ch.on('start', p => this.onStartMsg(p));
-      ch.on('hash', p => this.onHash(p));
-      ch.on('kick', p => { if (p.id === this.id) this.fail(new Error('room-full')); });
+      ch.on('start', p => { if (p && this.allow(p.from) && this.isHostId(p.from)) this.onStartMsg(p); });
+      ch.on('hash', p => { if (p && this.allow(p.from)) this.onHash(p); });
+      ch.on('kick', p => {
+        if (p && this.allow(p.from) && this.isPrivate && p.from === this.hostId && p.id === this.id) this.fail(new Error('room-full'));
+      });
       ch.onPresence(() => this.refreshRoom());
       await ch.subscribe();
       await this.publish();
@@ -201,33 +237,39 @@ export class OnlineSession {
   /** Recalcule la liste des membres à partir de la présence. */
   refreshRoom() {
     if (!this.room) return;
-    const present = this.room.members().filter(m => m.id);
+    const present = this.room.members().filter(m => isId(m.id));
     const byId = new Map(present.map(m => [m.id, m]));
     let order;
     if (this.fixed) order = this.fixed.map(m => m.id);
     else {
       // partie privée : le créateur d'abord (il est l'hôte), puis l'ordre d'arrivée ;
       // le mode est celui du créateur
-      const sorted = [...present].sort((a, b) => (b.creator ? 1 : 0) - (a.creator ? 1 : 0) || a.t - b.t || (a.id < b.id ? -1 : 1));
+      // l'ordre d'arrivée est celui que J'AI observé (l'heure déclarée par les autres
+      // n'est pas fiable : un tricheur pourrait s'annoncer « arrivé avant tout le monde »)
+      if (!this.firstSeen) this.firstSeen = new Map();
+      for (const m of present) if (!this.firstSeen.has(m.id)) this.firstSeen.set(m.id, m.id === this.id ? this.roomJoinedAt : Date.now());
+      const seen = id => this.firstSeen.get(id);
+      const sorted = [...present].sort((a, b) => (b.creator ? 1 : 0) - (a.creator ? 1 : 0) || seen(a.id) - seen(b.id) || (a.id < b.id ? -1 : 1));
       if (!this.mode) this.mode = sorted.find(m => m.creator)?.mode || sorted.find(m => m.mode)?.mode || '1v1';
       order = sorted.slice(0, this.size).map(m => m.id);
       // trop de monde : l'hôte renvoie les derniers arrivés
       if (sorted.length > this.size && order[0] === this.id) {
-        for (const m of sorted.slice(this.size)) this.room.send('kick', { id: m.id });
+        for (const m of sorted.slice(this.size)) this.send(this.room, 'kick', { id: m.id });
       }
     }
     const names = new Map((this.fixed || []).map(m => [m.id, m.name]));
     this.members = order.map((id, i) => {
       const p = byId.get(id);
       return {
-        id, name: p?.name || names.get(id) || '?', team: i % 2,
-        fighter: p?.pick && hasFighter(p.pick) ? p.pick : null,
+        id, name: cleanName(p?.name || names.get(id)), team: i % 2,
+        fighter: typeof p?.pick === 'string' && hasFighter(p.pick) ? p.pick : null,
         ready: !!p?.ready, present: !!p, me: id === this.id,
-        lvl: p?.lvl || null, title: p?.title || null,
+        lvl: p?.lvl ? cleanInt(p.lvl, 1, 50, 1) : null, title: typeof p?.title === 'string' ? p.title.slice(0, 24) : null,
       };
     });
     // l'hôte est le premier membre encore présent
     const host = this.members.find(m => m.present);
+    this.hostId = host ? host.id : null;
     this.isHost = !!host && host.id === this.id;
     this.emit();
   }
@@ -244,6 +286,13 @@ export class OnlineSession {
       const full = this.members.length >= this.size && this.members.every(m => m.present && m.ready);
       if (full) this.start();
     }
+  }
+
+  /** L'expéditeur est-il (ou peut-il légitimement être) l'hôte du salon ? */
+  isHostId(id) {
+    if (id === this.hostId) return true;
+    if (this.fixed) return this.fixed.some(m => m.id === id) && this.fixed.findIndex(m => m.id === id) <= this.fixed.findIndex(m => m.id === this.hostId);
+    return this.members[0]?.id === id;
   }
 
   /** Partie privée : l'hôte lance sans attendre (places vides = IA). */
@@ -266,12 +315,24 @@ export class OnlineSession {
       });
     }
     const payload = { seed: randomSeed(), roster: slots, delay: START_DELAY };
-    this.room.send('start', payload);
+    this.send(this.room, 'start', payload);
     this.onStartMsg(payload);
   }
 
   onStartMsg(p) {
     if (this.phase !== 'room') return;
+    // composition attendue : `size` places, équipes alternées, combattants existants
+    const N = this.size;
+    if (!Array.isArray(p.roster) || p.roster.length !== N || !Number.isFinite(p.seed)) return;
+    for (let i = 0; i < N; i++) {
+      const r = p.roster[i];
+      if (!r || typeof r.fighter !== 'string' || !hasFighter(r.fighter) || r.team !== i % 2) return;
+    }
+    p = {
+      seed: p.seed,
+      delay: cleanInt(p.delay, 500, 6000, START_DELAY),
+      roster: p.roster.map(r => ({ fighter: r.fighter, team: r.team, name: cleanName(r.name), bot: !!r.bot, id: isId(r.id) ? r.id : null })),
+    };
     this.clearTimers();
     this.phase = 'countdown';
     this.startInfo = {
@@ -290,12 +351,14 @@ export class OnlineSession {
   /** Appelé par le jeu à intervalles réguliers avec l'empreinte locale. */
   reportHash(tick, h) {
     this.hashes.set(tick, h);
-    this.room?.send('hash', { tick, h, id: this.id });
+    this.send(this.room, 'hash', { tick, h });
     const theirs = this.remoteHashes?.get(tick);
     if (theirs !== undefined && theirs !== h) this.flagDesync(tick);
   }
   onHash(p) {
+    if (!Number.isInteger(p.tick) || !Number.isInteger(p.h)) return;
     if (!this.remoteHashes) this.remoteHashes = new Map();
+    if (this.remoteHashes.size > 500) return;
     this.remoteHashes.set(p.tick, p.h);
     const mine = this.hashes.get(p.tick);
     if (mine !== undefined && mine !== p.h) this.flagDesync(p.tick);

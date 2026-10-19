@@ -663,5 +663,7 @@ async function boot() {
 
 boot();
 
-// accès console pour le débogage : BallsFight.match.world
-window.BallsFight = { get match() { return match; }, get session() { return session; }, renderer };
+// accès console pour le débogage (développement, ou URL avec ?debug) : BallsFight.match.world
+if (import.meta.env.DEV || new URLSearchParams(location.search).has('debug')) {
+  window.BallsFight = { get match() { return match; }, get session() { return session; }, renderer };
+}

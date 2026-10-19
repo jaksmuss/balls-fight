@@ -3,8 +3,8 @@
  * et ne donne accès qu'aux canaux temps réel publics (aucune table n'est utilisée).
  * Pour utiliser un autre projet : définir VITE_SUPABASE_URL et VITE_SUPABASE_KEY
  * (fichier .env, voir .env.example) puis relancer le build. */
-export const SUPABASE_URL = import.meta.env?.VITE_SUPABASE_URL || 'https://lomcuptsmqhaugktznep.supabase.co';
-export const SUPABASE_KEY = import.meta.env?.VITE_SUPABASE_KEY || 'sb_publishable__57xQCpxuG67bNwDWuXHAw_1PrTj55U';
+export const SUPABASE_URL = import.meta.env?.VITE_SUPABASE_URL || 'https://ppdntklkhxhfaykyjnwe.supabase.co';
+export const SUPABASE_KEY = import.meta.env?.VITE_SUPABASE_KEY || 'sb_publishable_Q2hDIuNC7holgGHVovCAag_D0Nhdh5l';
 
 /** Préfixe des canaux : à changer si le protocole réseau évolue (versions incompatibles). */
 export const PROTOCOL = 'bf1';

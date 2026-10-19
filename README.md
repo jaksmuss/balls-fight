@@ -51,7 +51,7 @@ La simulation est **entièrement déterministe**. Avec la même graine et les m�
 - **Détection des joueurs** : la présence Supabase est doublée d'un signal envoyé toutes les 1,5 s par chaque joueur.
 - **Parties privées** : rejoindre un code qui n'existe pas affiche « partie introuvable ».
 
-Serveur : **Supabase Realtime** (canaux publics, aucune table). Le projet et la clé *publishable* sont dans `src/net/config.js`. Pour utiliser un autre projet Supabase, copier `.env.example` en `.env` et le remplir.
+Serveur : **Supabase Realtime** (projet dédié « balls fight », canaux publics, aucune table). Tous les messages reçus sont validés (expéditeur, format, combattants existants, anti-spam), car les canaux sont publics. Le projet et la clé *publishable* sont dans `src/net/config.js`. Pour utiliser un autre projet Supabase, copier `.env.example` en `.env` et le remplir.
 
 ### Tester l'en-ligne sans serveur
 
