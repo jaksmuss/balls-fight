@@ -710,7 +710,6 @@ async function boot() {
   renderer.resize();
   requestAnimationFrame(frame);
   platform.loadingStop();
-  const firstVisit = progress().fights === 0;
 
   // un ami nous rejoint ou nous invite alors que le jeu est déjà ouvert
   platform.onJoinRoom(params => {
@@ -722,8 +721,6 @@ async function boot() {
   if (isRoomCode(code)) joinPrivate(code);
   // lancé depuis la page multijoueur de CrazyGames : directement dans une partie privée
   else if (platform.isInstantMultiplayer()) createPrivate('1v1');
-  // nouveau joueur : directement dans un combat (les menus viennent après)
-  else if (firstVisit) quickPlay();
 }
 
 /** Combat local 1V1 immédiat avec deux balles au hasard (un seul clic depuis le menu). */

@@ -25,7 +25,7 @@ Ce qui est déjà intégré (`src/platform/crazygames.js`) :
 - **multijoueur instantané** (`isInstantMultiplayer`) : lancé depuis la page multijoueur de CrazyGames, le jeu crée directement une partie privée joignable (1V1 par défaut, le créateur peut passer en 2V2 tant qu'il est seul) ;
 - **invitations** : au lancement (`inviteParams`) et pendant la partie, sans recharger (`addJoinRoomListener`) ;
 - **revanche dans le même salon** : à la fin d'un combat en ligne, le groupe revient au choix des balles sans quitter le salon ; un joueur qui arrive pendant un combat attend la manche suivante ;
-- **nouveaux joueurs directement en jeu** : à la toute première visite, un combat 1V1 au hasard démarre immédiatement ; ensuite le bouton « JOUER » du menu lance un combat en 1 clic ;
+- **en jeu en 1 clic** : le bouton « JOUER » du menu lance immédiatement un combat 1V1 au hasard ;
 - **langue** : choix du joueur, sinon `locale` CrazyGames (`systemInfo`), sinon anglais ;
 - **tailles d'écran** : mise en page vérifiée de 800×450 à 1920×1080 (densité de pixels 1), sans touche réservée (Échap n'est pas utilisée) ;
 - **sitelock** (`src/platform/sitelock.js`) : en production, le jeu ne démarre que sur les domaines CrazyGames et en local. Pour l'héberger aussi sur ton site, ajoute son domaine dans `VITE_ALLOWED_HOSTS` (voir `.env.example`) ;
