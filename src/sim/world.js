@@ -31,6 +31,8 @@ export class World {
     this.winnerTeam = null;
     this.endTime = 0;
     this.decision = false;  // victoire aux points
+    // statistiques du combat (succès) : n'influencent pas la simulation
+    this.stats = { hits: 0, maxHit: 0, kills: [] };
 
     const perTeam = {};
     for (const r of roster) perTeam[r.team] = (perTeam[r.team] || 0) + 1;
@@ -136,6 +138,9 @@ export class World {
     if (a <= 0) return 0;
     target.hp -= a;
     target.hitTime = this.time;
+    target.dmgTaken = (target.dmgTaken || 0) + a;
+    if (o.kind !== 'dot') this.stats.hits++;
+    if (a > this.stats.maxHit) this.stats.maxHit = a;
     this.emit('hit', {
       id: target.id, x: o.x ?? target.x, y: o.y ?? target.y, amount: a,
       color: o.color || '#ffffff', big: !!o.big || a >= 10, kind: o.kind || 'ability',
@@ -143,7 +148,7 @@ export class World {
     });
     if (src && !src.dead) src.onDealtDamage(target, a, o);
     target.onDamaged(a, src, o);
-    if (target.hp <= 0 && !target.dead) this.kill(target, src);
+    if (target.hp <= 0 && !target.dead) this.kill(target, src, o);
     return a;
   }
 
@@ -156,10 +161,11 @@ export class World {
     return a;
   }
 
-  kill(target, src) {
+  kill(target, src, o = {}) {
     if (target.preventDeath()) return;
     target.hp = 0;
     target.dead = true;
+    this.stats.kills.push({ victim: target, src, kind: o.kind || 'ability', reflected: !!o.reflected, time: this.time });
     target.onDeath();
     this.emit('death', { id: target.id, x: target.x, y: target.y, r: target.r, color: target.color, summon: target.summon });
     // les invocations meurent avec leur maître
@@ -210,7 +216,7 @@ export class World {
     if (ball.st.slam > 0) {
       const src = ball.st.slamSrc;
       ball.st.slam = 0;
-      this.damage(ball, impact * ball.st.slamF, src, { x: ball.x - nx * ball.r, y: ball.y - ny * ball.r, color: '#c9a0ff', big: true });
+      this.damage(ball, impact * ball.st.slamF, src, { kind: 'slam', x: ball.x - nx * ball.r, y: ball.y - ny * ball.r, color: '#c9a0ff', big: true });
       this.emit('shake', { amount: 8 });
     }
     ball.onWall(nx, ny, impact);

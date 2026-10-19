@@ -53,9 +53,10 @@ export class OnlineSession {
    * @param {(s: OnlineSession) => void} o.onUpdate appelé à chaque changement d'état
    * @param {(info: object) => void} o.onStart appelé quand le combat est lancé
    */
-  constructor({ name, onUpdate, onStart }) {
+  constructor({ name, profile = {}, onUpdate, onStart }) {
     this.id = uid();
     this.name = name;
+    this.profile = profile;   // { level, title } affichés aux autres joueurs
     this.onUpdate = onUpdate;
     this.onStart = onStart;
     this.phase = 'idle';       // idle | queue | room | countdown | fight | error
@@ -178,6 +179,7 @@ export class OnlineSession {
     return this.room.track({
       id: this.id, name: this.name, t: this.roomJoinedAt,
       pick: this.myPick, ready: this.ready, mode: this.mode, creator: !!this.creator, v: GAME_VERSION,
+      lvl: this.profile.level || 1, title: this.profile.title || null,
     });
   }
 
@@ -221,6 +223,7 @@ export class OnlineSession {
         id, name: p?.name || names.get(id) || '?', team: i % 2,
         fighter: p?.pick && hasFighter(p.pick) ? p.pick : null,
         ready: !!p?.ready, present: !!p, me: id === this.id,
+        lvl: p?.lvl || null, title: p?.title || null,
       };
     });
     // l'hôte est le premier membre encore présent

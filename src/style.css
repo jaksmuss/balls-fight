@@ -232,7 +232,7 @@ button {
   gap: 14px;
   padding: 16px;
   text-align: center;
-  background: rgba(5, 8, 25, 0.62);
+  background: rgba(5, 8, 25, 0.5);
   animation: fadein 0.35s ease-out;
 }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
@@ -312,3 +312,71 @@ button {
   .bottom-bar .btn { padding: 8px 12px; font-size: 14px; }
   .bottom-bar .btn.primary { font-size: 18px; }
 }
+
+/* ------------------------------------------------------------- progression */
+.player-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(460px, 100%);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.lvl-badge {
+  flex: none;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 35% 30%, #ffe066, #ff9a1a);
+  color: #2a1400;
+  font-family: var(--font-title);
+  font-size: 22px;
+  line-height: 1;
+  border: 3px solid #000;
+}
+.lvl-badge small { font-family: system-ui, sans-serif; font-size: 10px; font-weight: 800; }
+.lvl-badge.small { width: 42px; height: 42px; font-size: 17px; }
+.pc-main { flex: 1; min-width: 0; text-align: left; }
+.pc-name { font-weight: 800; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-title { margin-left: 8px; font-weight: 600; font-size: 13px; color: var(--gold); }
+.pc-xp { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.xpbar { height: 8px; border-radius: 99px; background: rgba(255, 255, 255, 0.12); overflow: hidden; margin-top: 6px; }
+.xpbar > div { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #7dff9a, #3ad0ff); transition: width 1.2s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.xpbar.big { height: 12px; flex: 1; margin: 0; }
+
+.prog-summary { display: flex; flex-direction: column; gap: 8px; align-items: center; width: min(460px, 100%); }
+.xp-line { display: flex; align-items: center; gap: 10px; width: 100%; }
+.xp-gain { color: #7dff9a; font-size: 18px; white-space: nowrap; }
+.levelup { font-family: var(--font-title); font-size: 30px; color: var(--gold); -webkit-text-stroke: 2px #000; paint-order: stroke fill; animation: pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.ach-pop { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 12px; background: var(--panel); border: 2px solid var(--line); text-align: left; animation: pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.ach-pop small { display: block; color: var(--muted); font-size: 11px; }
+.ach-pop.rare, .ach.rare.done { border-color: #3ab0ff; }
+.ach-pop.epic, .ach.epic.done { border-color: #c77dff; box-shadow: 0 0 18px rgba(199, 125, 255, 0.35); }
+.ach-icon { font-size: 28px; width: 40px; text-align: center; flex: none; }
+.unlock-pop { font-size: 14px; color: var(--muted); }
+.unlock-pop b { color: #fff; }
+
+.ach-grid { width: min(1100px, 100%); display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.ach { display: flex; gap: 10px; align-items: center; padding: 10px; border-radius: 12px; background: var(--panel); border: 2px solid transparent; opacity: 0.6; }
+.ach.done { opacity: 1; border-color: rgba(125, 255, 154, 0.5); }
+.ach-text { flex: 1; min-width: 0; }
+.ach-name { font-weight: 800; display: flex; justify-content: space-between; gap: 8px; }
+.ach-rarity { font-size: 11px; font-weight: 700; color: var(--muted); }
+.ach.rare .ach-rarity { color: #3ab0ff; }
+.ach.epic .ach-rarity { color: #c77dff; }
+.ach-desc { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.ach-reward { font-size: 12px; color: var(--gold); margin-top: 4px; }
+
+.style-section { width: min(900px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.style-section h2 { margin: 0 0 10px; font-family: var(--font-title); font-weight: 400; font-size: 20px; color: var(--gold); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 14px; border-radius: 10px; background: var(--panel-2); border: 2px solid transparent; font-weight: 700; font-size: 14px; }
+.chip small { font-size: 11px; font-weight: 600; color: var(--muted); }
+.chip.active { border-color: var(--gold); color: var(--gold); }
+.chip.locked { opacity: 0.55; cursor: default; }

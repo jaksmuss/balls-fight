@@ -77,6 +77,19 @@ export const platform = {
     return new URLSearchParams(location.search).get(name);
   },
 
+  /** Sauvegarde : dans le compte CrazyGames (synchronisée entre appareils) si disponible,
+   *  sinon dans le navigateur. Les deux sont gardés à jour. */
+  storageGet(key) {
+    let v = null;
+    if (sdk?.data) { try { v = sdk.data.getItem(key); } catch { /* ignoré */ } }
+    if (v == null) { try { v = localStorage.getItem(key); } catch { /* ignoré */ } }
+    return v;
+  },
+  storageSet(key, value) {
+    if (sdk?.data) { try { sdk.data.setItem(key, value); } catch { /* ignoré */ } }
+    try { localStorage.setItem(key, value); } catch { /* ignoré */ }
+  },
+
   /** Langue suggérée par la plateforme (code pays / langue), si disponible. */
   languageHint() {
     const info = sdk?.user?.systemInfo;

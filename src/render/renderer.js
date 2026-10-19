@@ -4,7 +4,8 @@
  * Math.random librement (ils n'influencent pas la simulation). */
 import { play } from '../audio.js';
 import { fighterName } from '../i18n.js';
-import { lightning, shade, rgba } from '../fighters/helpers.js';
+import { lightning, shade, rgba, star } from '../fighters/helpers.js';
+import { THEMES, drawThemeDecor, spawnTrail, VictoryFx } from './style.js';
 
 export const TEAM_COLORS = ['#3d9cff', '#ff4d5e'];
 const FONT = '"Lilita One", "Arial Black", Impact, system-ui, sans-serif';
@@ -16,13 +17,22 @@ export class Renderer {
     this.view = { w: 0, h: 0, dpr: 1, scale: 1, ox: 0, oy: 0 };
     this.world = null;
     this.silent = false;   // pas de son (combat de démonstration derrière les menus)
+    // apparence choisie par le joueur (thème, traînée, effet de victoire)
+    this.style = { theme: 'classic', trail: 'none', trailTeams: null, victory: 'none', victoryTeam: null };
     this.reset();
   }
 
   sfx(name, vol, gap) { if (!this.silent) play(name, vol, gap); }
 
+  /** trailTeams : liste des équipes qui portent la traînée ; victoryTeam : équipe dont la
+   *  victoire déclenche l'effet ('any' = n'importe laquelle). */
+  setStyle(style) { Object.assign(this.style, style); }
+
   reset() {
+    this.victoryFx = null;
+    this.victoryDelay = 0;
     this.particles = [];
+    this.trailParts = [];  // traînée cosmétique (dessinée sous les balles)
     this.texts = [];
     this.fx = [];          // beams, zaps, rings, slashes, blinks
     this.trails = new Map();
@@ -115,6 +125,10 @@ export class Renderer {
         // ralenti + zoom sur la dernière mort
         this.slowmo = 1.4;
         this.focus = this.lastDeath || null;
+        {
+          const st = this.style;
+          if (st.victory !== 'none' && e.team !== null && (st.victoryTeam === 'any' || st.victoryTeam === e.team)) this.victoryDelay = 1.2;
+        }
         break;
       case 'explode':
         this.burst(e.x, e.y, 26 + e.r * 0.2, [e.color, '#ffffff', '#ffd27a'], e.r * 4, 4.5);
@@ -217,12 +231,27 @@ export class Renderer {
       p.vx *= 1 - 3 * edt; p.vy *= 1 - 3 * edt;
     }
     this.particles = this.particles.filter(p => p.life > 0);
+    for (const p of this.trailParts) { p.life -= edt; p.x += p.vx * edt; p.y += p.vy * edt; }
+    this.trailParts = this.trailParts.filter(p => p.life > 0);
     for (const t of this.texts) { t.life -= edt; t.y += t.vy * edt; t.vy *= 1 - 2 * edt; }
     this.texts = this.texts.filter(t => t.life > 0);
     for (const f of this.fx) f.life -= edt;
     this.fx = this.fx.filter(f => f.life > 0);
     this.shake = Math.max(0, this.shake - 40 * dt);
     this.flash = Math.max(0, this.flash - dt * 1.6);
+    if (this.victoryDelay > 0) {
+      this.victoryDelay -= dt;
+      if (this.victoryDelay <= 0) this.victoryFx = new VictoryFx(this.style.victory, this.view.w, this.view.h);
+    }
+    if (this.victoryFx && !this.victoryFx.update(dt)) this.victoryFx = null;
+
+    // traînée cosmétique du joueur
+    const st = this.style;
+    if (this.world && st.trail !== 'none' && st.trailTeams) {
+      for (const b of this.world.mainBalls) {
+        if (!b.dead && st.trailTeams.includes(b.team) && b.alpha > 0.5) spawnTrail(st.trail, b, this.trailParts, this.world.time);
+      }
+    }
 
     // traînées des balles rapides
     if (this.world) {
@@ -247,9 +276,10 @@ export class Renderer {
     const { ctx, view: v } = this;
     const w = this.world;
     ctx.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
+    const theme = THEMES[this.style.theme] || THEMES.classic;
     const bg = ctx.createRadialGradient(v.w / 2, v.h / 2, 0, v.w / 2, v.h / 2, Math.max(v.w, v.h) * 0.75);
-    bg.addColorStop(0, '#141c4a');
-    bg.addColorStop(1, '#070a20');
+    bg.addColorStop(0, theme.bg[0]);
+    bg.addColorStop(1, theme.bg[1]);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, v.w, v.h);
     if (!w) return;
@@ -283,6 +313,7 @@ export class Renderer {
       }
       ctx.restore();
     }
+    this.drawParticles(ctx, this.trailParts);
     for (const b of live) b.drawUnder(ctx);
     // anneau d'équipe au sol
     {
@@ -304,15 +335,7 @@ export class Renderer {
     for (const b of order) this.drawHp(ctx, b);
     this.drawFx(ctx);
 
-    // particules
-    for (const p of this.particles) {
-      ctx.globalAlpha = Math.max(0, p.life / p.max);
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
+    this.drawParticles(ctx, this.particles);
     // chiffres flottants
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -343,15 +366,46 @@ export class Renderer {
       ctx.fillRect(0, v.h - 36 * k, v.w, 36 * k);
     }
     this.drawHud(ctx);
+    this.victoryFx?.draw(ctx);
+  }
+
+  drawParticles(ctx, list) {
+    for (const p of list) {
+      const a = Math.max(0, p.life / p.max);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      switch (p.shape) {
+        case 'star': star(ctx, p.x, p.y, p.size, 5, 0.45); ctx.fill(); break;
+        case 'square': ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); break;
+        case 'ring':
+          ctx.strokeStyle = p.color; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.stroke();
+          break;
+        case 'heart': {
+          const r = p.size;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y + r);
+          ctx.bezierCurveTo(p.x - r * 1.6, p.y - r * 0.2, p.x - r * 0.6, p.y - r * 1.4, p.x, p.y - r * 0.4);
+          ctx.bezierCurveTo(p.x + r * 0.6, p.y - r * 1.4, p.x + r * 1.6, p.y - r * 0.2, p.x, p.y + r);
+          ctx.fill();
+          break;
+        }
+        default:
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   drawArena(ctx, S, wl) {
+    const th = THEMES[this.style.theme] || THEMES.classic;
     const fg = ctx.createLinearGradient(0, 0, S, S);
-    fg.addColorStop(0, '#1b2459');
-    fg.addColorStop(1, '#10173f');
+    fg.addColorStop(0, th.floor[0]);
+    fg.addColorStop(1, th.floor[1]);
     ctx.fillStyle = fg;
     ctx.fillRect(0, 0, S, S);
-    ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+    drawThemeDecor(ctx, th, S, this.world ? this.world.time : 0);
+    ctx.strokeStyle = th.grid;
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let i = 50; i < S; i += 50) { ctx.moveTo(i, 0); ctx.lineTo(i, S); ctx.moveTo(0, i); ctx.lineTo(S, i); }
@@ -364,14 +418,20 @@ export class Renderer {
       ctx.closePath();
       ctx.fill();
     };
-    quad([-wl, -wl, S + wl, -wl, S, 0, 0, 0], '#6a7bd6');
-    quad([-wl, -wl, 0, 0, 0, S, -wl, S + wl], '#5263bb');
-    quad([-wl, S + wl, 0, S, S, S, S + wl, S + wl], '#1d2558');
-    quad([S + wl, -wl, S + wl, S + wl, S, S, S, 0], '#28316c');
-    ctx.strokeStyle = '#070b22';
-    ctx.lineWidth = 2;
+    const [top, left, bottom, right] = th.walls;
+    quad([-wl, -wl, S + wl, -wl, S, 0, 0, 0], top);
+    quad([-wl, -wl, 0, 0, 0, S, -wl, S + wl], left);
+    quad([-wl, S + wl, 0, S, S, S, S + wl, S + wl], bottom);
+    quad([S + wl, -wl, S + wl, S + wl, S, S, S, 0], right);
+    ctx.save();
+    if (th.glow) { ctx.shadowColor = th.edge; ctx.shadowBlur = 18; }
+    ctx.strokeStyle = th.edge;
+    ctx.lineWidth = th.glow ? 3 : 2;
     ctx.strokeRect(-wl, -wl, S + 2 * wl, S + 2 * wl);
+    if (th.glow) ctx.strokeRect(0, 0, S, S);
+    ctx.restore();
   }
+
 
   drawBall(ctx, b) {
     const t = this.world.time;

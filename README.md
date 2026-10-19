@@ -32,6 +32,13 @@ Ce qui est déjà intégré (`src/platform/crazygames.js`) :
 
 Hors CrazyGames, toutes ces fonctions sont sans effet.
 
+## Progression
+
+- **Niveau de joueur** (1 à 50) : de l'XP à chaque combat (20 en local, 35 en ligne, +25 en cas de victoire), plus un bonus à chaque succès.
+- **31 succès** (`src/progress/achievements.js`) : paliers (combats, victoires en ligne, nombre de balles différentes) et moments rares (remontada, K.O. parfait, coup fatal renvoyé par le Miroir…).
+- **Récompenses visuelles** (`src/progress/cosmetics.js`), débloquées par niveau ou par succès : titres, traînées, effets de victoire, thèmes d'arène. Elles se choisissent dans l'écran « Style ». Tout est cosmétique : aucun effet sur les combats.
+- **Sauvegarde** dans le compte CrazyGames si disponible (synchronisée entre appareils), sinon dans le navigateur.
+
 ## Mode en ligne
 
 La simulation est **entièrement déterministe**. Avec la même graine et les mêmes combattants, tous les navigateurs calculent exactement le même combat. Les joueurs n'échangent donc que leurs choix de combattants. L'hôte diffuse ensuite la graine, et chacun calcule le combat chez lui : aucun flux de positions, aucun serveur de jeu à héberger.

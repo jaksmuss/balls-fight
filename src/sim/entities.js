@@ -93,7 +93,7 @@ export class Projectile extends Entity {
   /** Effet à l'impact (par défaut : dégâts + recul). */
   onHit(t) {
     this.world.damage(t, this.damage, this.owner, {
-      kind: this.kind, x: this.x, y: this.y, color: this.color, big: this.big,
+      kind: this.kind, x: this.x, y: this.y, color: this.color, big: this.big, reflected: this.reflected,
     });
     if (this.knock) {
       const n = M.normalize(this.vx, this.vy);

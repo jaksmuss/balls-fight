@@ -4,7 +4,10 @@ import { Renderer, TEAM_COLORS } from './render/renderer.js';
 import { renderThumb } from './render/ballArt.js';
 import { Match } from './match.js';
 import { FIGHTERS, FIGHTER_IDS, getFighter } from './fighters/registry.js';
-import { t, fighterName, fighterDesc, detectLanguage, setLanguage, getLanguage } from './i18n.js';
+import { t, tr, fighterName, fighterDesc, detectLanguage, setLanguage, getLanguage } from './i18n.js';
+import { loadProgress, progress, recordFight, xpForLevel, MAX_LEVEL, isUnlocked, equip, equipped, counterValue, achievementCount } from './progress/progress.js';
+import { ACHIEVEMENTS, ACHIEVEMENT_BY_ID } from './progress/achievements.js';
+import { COSMETICS, SLOTS, findCosmetic } from './progress/cosmetics.js';
 import { play, unlockAudio, isMuted, setMuted } from './audio.js';
 import { platform } from './platform/crazygames.js';
 import { OnlineSession, randomCode, GAME_VERSION } from './net/online.js';
@@ -76,6 +79,15 @@ function startDemo() {
     renderer, demo: true,
     onEnd: () => { if (demo) startDemo(); },
   });
+  applyStyle('demo');
+}
+
+/** Applique l'apparence équipée. who : 'demo' | 'local' | numéro d'équipe du joueur en ligne. */
+function applyStyle(who) {
+  const theme = equipped('theme').id, trail = equipped('trail').id, victory = equipped('victory').id;
+  if (who === 'demo') renderer.setStyle({ theme, trail: 'none', trailTeams: null, victory: 'none', victoryTeam: null });
+  else if (who === 'local') renderer.setStyle({ theme, trail, trailTeams: [0, 1], victory, victoryTeam: 'any' });
+  else renderer.setStyle({ theme, trail, trailTeams: [who], victory, victoryTeam: who });
 }
 
 // ======================================================================= menu
@@ -91,9 +103,14 @@ function showMenu() {
     setMuted(!isMuted());
     soundBtn.textContent = `${t('sound')} : ${isMuted() ? 'OFF' : 'ON'}`;
   }, 'btn small');
+  const ach = achievementCount();
   setScreen('menu', h('div', { class: 'screen dim menu' },
     h('h1', { class: 'logo', html: 'BALLS<br><span>FIGHT</span>' }),
     h('p', { class: 'tagline' }, t('tagline')),
+    playerCard(),
+    h('div', { class: 'menu-footer' },
+      button(`🏆 ${t('achievements')} ${ach.done}/${ach.total}`, showAchievements),
+      button(`🎨 ${t('style')}`, showStyle)),
     h('div', { class: 'menu-groups' },
       h('div', { class: 'menu-group' },
         h('h2', {}, t('local')),
@@ -233,8 +250,9 @@ function startLocalFight(teamSize, picks) {
   match = new Match({
     seed: randomSeed(), roster, renderer,
     names: [],
-    onEnd: w => showResult(w, { kind: 'local', teamSize }),
+    onEnd: w => showResult(w, { kind: 'local', teamSize, prog: recordFight({ world: w, online: false, teamSize, myFighters: picks }) }),
   });
+  applyStyle('local');
   platform.gameplayStart();
   showFightBar(false);
 }
@@ -309,7 +327,97 @@ function showResult(w, ctx) {
   }
   setScreen('result', h('div', { class: 'overlay' },
     h('h1', { class: 'big-title', style: `color:${color}` }, title),
-    names, sub, h('div', { class: 'actions' }, actions)));
+    names, sub, ctx.prog ? progressSummary(ctx.prog) : null, h('div', { class: 'actions' }, actions)));
+}
+
+// ======================================================================= progression
+function titleName(id) { return id && id !== 'none' ? tr(findCosmetic('title', id).name) : ''; }
+
+/** Carte du joueur (pseudo, titre, niveau, barre d'XP). */
+function playerCard() {
+  const pr = progress();
+  const need = xpForLevel(pr.level);
+  const frac = pr.level >= MAX_LEVEL ? 1 : pr.xp / need;
+  const title = titleName(equipped('title').id);
+  return h('div', { class: 'player-card' },
+    h('div', { class: 'lvl-badge' }, h('small', {}, t('level')), String(pr.level)),
+    h('div', { class: 'pc-main' },
+      h('div', { class: 'pc-name' }, playerName, title ? h('span', { class: 'pc-title' }, title) : null),
+      h('div', { class: 'xpbar' }, h('div', { style: `width:${(frac * 100).toFixed(1)}%` })),
+      h('div', { class: 'pc-xp' }, pr.level >= MAX_LEVEL ? 'MAX' : `${pr.xp} / ${need} XP`)));
+}
+
+/** Récapitulatif de fin de combat : XP, niveau, succès et récompenses obtenus. */
+function progressSummary(r) {
+  const need = xpForLevel(r.level);
+  const pr = progress();
+  const bar = h('div', { class: 'xpbar big' }, h('div', { style: `width:${r.levelBefore === r.level ? (r.xpBefore / need * 100).toFixed(1) : 0}%` }));
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    bar.firstChild.style.width = `${(pr.level >= MAX_LEVEL ? 100 : pr.xp / need * 100).toFixed(1)}%`;
+  }));
+  const items = [];
+  if (r.level > r.levelBefore) items.push(h('div', { class: 'levelup' }, t('levelUp', { n: r.level })));
+  for (const a of r.newAchievements) {
+    items.push(h('div', { class: `ach-pop ${a.rarity}` }, h('span', { class: 'ach-icon' }, a.icon),
+      h('div', {}, h('small', {}, t('newAchievement')), h('b', {}, tr(a.name)))));
+  }
+  for (const u of r.newUnlocks) {
+    items.push(h('div', { class: 'unlock-pop' }, `🎁 ${t('newUnlock')} — ${t('slot_' + u.slot)} : `, h('b', {}, tr(u.item.name))));
+  }
+  if (r.newAchievements.length || r.level > r.levelBefore) setTimeout(() => play('win'), 400);
+  return h('div', { class: 'prog-summary' },
+    h('div', { class: 'xp-line' }, h('span', { class: 'lvl-badge small' }, h('small', {}, t('level')), String(pr.level)), bar, h('b', { class: 'xp-gain' }, `+${r.xp} XP`)),
+    items);
+}
+
+function showAchievements() {
+  const done = progress().achievements;
+  const order = { epic: 2, rare: 1, common: 0 };
+  const list = [...ACHIEVEMENTS].sort((a, b) => (!!done[b.id] - !!done[a.id]) || order[a.rarity] - order[b.rarity]);
+  const cnt = achievementCount();
+  setScreen('achievements', h('div', { class: 'screen dim select' },
+    h('div', { class: 'select-head' }, h('h1', {}, `🏆 ${t('achievements')}`), h('div', { class: 'timer' }, `${cnt.done}/${cnt.total}`)),
+    h('div', { class: 'ach-grid' }, list.map(a => {
+      const ok = !!done[a.id];
+      const prog = a.counter && !ok ? h('div', { class: 'xpbar' }, h('div', { style: `width:${Math.min(100, counterValue(a.counter) / a.goal * 100)}%` })) : null;
+      const reward = a.title ? h('div', { class: 'ach-reward' }, `🎖 ${t('slot_title')} : ${titleName(a.title)}`) : null;
+      return h('div', { class: `ach ${a.rarity}${ok ? ' done' : ''}` },
+        h('div', { class: 'ach-icon' }, ok ? a.icon : '🔒'),
+        h('div', { class: 'ach-text' },
+          h('div', { class: 'ach-name' }, tr(a.name), h('span', { class: 'ach-rarity' }, t('rarity_' + a.rarity))),
+          h('div', { class: 'ach-desc' }, tr(a.desc)),
+          prog, reward));
+    })),
+    h('div', { class: 'bottom-bar' }, button(t('back'), showMenu))));
+}
+
+function showStyle() {
+  const sections = SLOTS.map(slot => {
+    const cur = equipped(slot).id;
+    return h('div', { class: 'style-section' },
+      h('h2', {}, t('slot_' + slot)),
+      h('div', { class: 'chips' }, COSMETICS[slot].map(c => {
+        const ok = isUnlocked(c);
+        const req = !c.unlock ? '' : c.unlock.level ? t('unlockLevel', { n: c.unlock.level }) : t('unlockAchievement', { a: tr(ACHIEVEMENT_BY_ID.get(c.unlock.achievement)?.name) });
+        return h('button', {
+          class: `chip${c.id === cur ? ' active' : ''}${ok ? '' : ' locked'}`,
+          title: ok ? '' : req,
+          onclick: () => {
+            if (!ok) return;
+            play('click');
+            equip(slot, c.id);
+            applyStyle('demo');
+            showStyle();
+          },
+        }, ok ? tr(c.name) : `🔒 ${tr(c.name)}`, ok ? null : h('small', {}, req));
+      })));
+  });
+  setScreen('style', h('div', { class: 'screen dim select' },
+    h('div', { class: 'select-head' }, h('h1', {}, `🎨 ${t('style')}`)),
+    playerCard(),
+    h('p', { class: 'sub' }, t('styleHint')),
+    sections,
+    h('div', { class: 'bottom-bar' }, button(t('back'), showMenu))));
 }
 
 // ======================================================================= en ligne
@@ -319,8 +427,10 @@ function leaveOnline() {
 
 function newSession() {
   leaveOnline();
+  const pr = progress();
   const s = session = new OnlineSession({
     name: playerName,
+    profile: { level: pr.level, title: equipped('title').id === 'none' ? null : equipped('title').id },
     onUpdate: x => { if (x === session) onSessionUpdate(x); },
     onStart: info => { if (s === session) startOnlineFight(s, info); },
   });
@@ -377,7 +487,7 @@ function showRoom(s) {
       const m = s.members[i];
       slots.push({
         team: i % 2,
-        label: m ? (m.me ? `${t('you')} — ${m.name}` : m.name) + (m.present ? '' : ` (${t('bot')})`) : t('waiting'),
+        label: m ? (m.me ? `${t('you')} — ${m.name}` : m.name) + (m.lvl ? ` · ${t('level')} ${m.lvl}` : '') + (m.present ? '' : ` (${t('bot')})`) : t('waiting'),
         fighter: m?.me ? s.myPick : m?.fighter,
         editable: !!m?.me && !s.ready,
         ready: m?.ready,
@@ -419,10 +529,13 @@ function startOnlineFight(s, info) {
     onHash: (tick, hsh) => s.reportHash(tick, hsh),
     onEnd: w => {
       const again = s.isPrivate ? () => joinPrivate(s.code) : () => startQueue(s.mode);
-      showResult(w, { kind: 'online', myTeam: s.myTeam, teamSize: s.size / 2, again });
+      const mine = info.roster[info.myIndex];
+      const prog = recordFight({ world: w, online: true, teamSize: s.size / 2, myTeam: s.myTeam, myFighters: mine ? [mine.fighter] : [], privateMatch: !!s.isPrivate });
+      showResult(w, { kind: 'online', myTeam: s.myTeam, teamSize: s.size / 2, again, prog });
       leaveOnline();
     },
   });
+  applyStyle(s.myTeam ?? 0);
   const desync = showFightBar(true);
   s.ui = { desync };
   // compte à rebours
@@ -524,6 +637,7 @@ async function boot() {
   platform.loadingStart();
   await platform.init();
   detectLanguage(platform.languageHint());
+  loadProgress();
   try {
     playerName = (await platform.username()) || localStorage.getItem('bf-name') || '';
     if (!playerName) {

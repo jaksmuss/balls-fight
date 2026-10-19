@@ -65,6 +65,22 @@ const STRINGS = {
     fighters: 'combattants',
     tapToContinue: 'Touchez pour continuer',
     controlsHint: 'Espace : pause · 1/2/3 : vitesse · Échap : quitter',
+    level: 'Niv.',
+    achievements: 'Succès',
+    style: 'Style',
+    levelUp: 'NIVEAU {n} !',
+    newAchievement: 'Succès débloqué',
+    newUnlock: 'Nouveau',
+    slot_title: 'Titre',
+    slot_trail: 'Traînée',
+    slot_victory: 'Effet de victoire',
+    slot_theme: 'Arène',
+    unlockLevel: 'Niveau {n}',
+    unlockAchievement: 'Succès « {a} »',
+    rarity_common: 'Commun',
+    rarity_rare: 'Rare',
+    rarity_epic: 'Épique',
+    styleHint: 'Tout est visuel : aucun effet sur les combats.',
   },
   en: {
     title: 'BALLS FIGHT',
@@ -131,6 +147,22 @@ const STRINGS = {
     fighters: 'fighters',
     tapToContinue: 'Tap to continue',
     controlsHint: 'Space: pause · 1/2/3: speed · Esc: quit',
+    level: 'Lvl',
+    achievements: 'Achievements',
+    style: 'Style',
+    levelUp: 'LEVEL {n}!',
+    newAchievement: 'Achievement unlocked',
+    newUnlock: 'New',
+    slot_title: 'Title',
+    slot_trail: 'Trail',
+    slot_victory: 'Victory effect',
+    slot_theme: 'Arena',
+    unlockLevel: 'Level {n}',
+    unlockAchievement: 'Achievement "{a}"',
+    rarity_common: 'Common',
+    rarity_rare: 'Rare',
+    rarity_epic: 'Epic',
+    styleHint: 'Purely cosmetic: no effect on fights.',
   },
 };
 
@@ -164,3 +196,5 @@ export function t(key, vars) {
 /** Nom / description d'un combattant dans la langue courante. */
 export function fighterName(meta) { return meta.name[lang] || meta.name.en; }
 export function fighterDesc(meta) { return meta.desc[lang] || meta.desc.en; }
+/** Texte bilingue { fr, en } dans la langue courante. */
+export function tr(obj) { return obj?.[lang] || obj?.en || ''; }
