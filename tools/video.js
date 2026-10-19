@@ -18,6 +18,9 @@ const match = new Match({ seed, roster: ids.map((f, i) => ({ fighter: f, team: i
 renderer.silent = true;
 renderer.setStyle({ theme: q.get('theme') || 'classic', trail: 'none', trailTeams: null, victory: 'confetti', victoryTeam: 'any' });
 renderer.resize();
+// format portrait : HUD plus grand et logo dans la bande libre sous l'arène
+const portrait = innerHeight > innerWidth * 1.2;
+if (portrait) renderer.view.hud = 1.6;
 
 const W = () => renderer.view.w, H = () => renderer.view.h;
 let frame = 0, endAt = null, cardStart = null;
@@ -62,6 +65,26 @@ function endCard(ctx, t) {
   ctx.restore();
 }
 
+function bottomLogo(ctx) {
+  if (!portrait) return;
+  const v = renderer.view;
+  const arenaBottom = v.oy + (match.world.size + v.wall) * v.scale;
+  const cy = (arenaBottom + H()) / 2;
+  const size = Math.min(W() * 0.13, (H() - arenaBottom) * 0.42);
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,130,40,0.5)'; ctx.shadowBlur = size * 0.4;
+  ctx.font = `${size}px ${FONT}`;
+  const w1 = ctx.measureText('BALLS ').width, w2 = ctx.measureText('FIGHT').width;
+  const x0 = W() / 2 - (w1 + w2) / 2;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  ctx.lineWidth = size * 0.12; ctx.strokeStyle = '#000';
+  ctx.strokeText('BALLS', x0, cy - size * 0.18); ctx.fillStyle = '#fff'; ctx.fillText('BALLS', x0, cy - size * 0.18);
+  ctx.strokeText('FIGHT', x0 + w1, cy - size * 0.18); ctx.fillStyle = '#ffd23a'; ctx.fillText('FIGHT', x0 + w1, cy - size * 0.18);
+  ctx.shadowBlur = 0;
+  text(ctx, 'Pick your ball. Watch it fight!', W() / 2, cy + size * 0.62, size * 0.36, '#dfe5ff', 0.14);
+  ctx.restore();
+}
+
 /** Calcule l'image suivante ; renvoie null quand la vidéo est terminée. */
 window.renderFrame = () => {
   const t = frame / FPS;
@@ -72,6 +95,7 @@ window.renderFrame = () => {
     renderer.update(DT);
     renderer.draw();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    bottomLogo(ctx);
     intro(ctx, t);
     if (w.over && endAt === null) endAt = t;
     if (endAt !== null && t - endAt > 3.4) cardStart = t;
