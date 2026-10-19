@@ -6,6 +6,7 @@ let master = null;
 let noiseBuf = null;
 let muted = false;
 let platformMuted = false;
+let backgroundMuted = false;   // onglet / application en arrière-plan
 const last = {};
 
 try { muted = localStorage.getItem('bf-muted') === '1'; } catch { /* ignoré */ }
@@ -38,8 +39,14 @@ export function setMuted(m) {
 }
 /** Coupure imposée par la plateforme (pub, réglage CrazyGames). */
 export function setPlatformMuted(m) { platformMuted = m; applyGain(); }
+/** Arrière-plan : coupe le son et met le contexte audio en pause. */
+export function setBackgroundMuted(m) {
+  backgroundMuted = m;
+  applyGain();
+  if (ctx) (m ? ctx.suspend() : ctx.resume()).catch(() => {});
+}
 function applyGain() {
-  if (master) master.gain.value = muted || platformMuted ? 0 : 0.5;
+  if (master) master.gain.value = muted || platformMuted || backgroundMuted ? 0 : 0.5;
 }
 
 function tone(type, f0, f1, dur, vol, delay = 0) {
@@ -94,7 +101,7 @@ const SOUNDS = {
 
 /** Joue un son (limité à un toutes les `gap` secondes par nom). */
 export function play(name, vol = 1, gap = 0.035) {
-  if (muted || platformMuted) return;
+  if (muted || platformMuted || backgroundMuted) return;
   if (!ensure() || ctx.state !== 'running') return;
   const now = ctx.currentTime;
   if (last[name] && now - last[name] < gap) return;

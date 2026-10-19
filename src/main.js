@@ -10,6 +10,8 @@ import { ACHIEVEMENTS, ACHIEVEMENT_BY_ID } from './progress/achievements.js';
 import { COSMETICS, SLOTS, findCosmetic } from './progress/cosmetics.js';
 import { play, unlockAudio, isMuted, setMuted } from './audio.js';
 import { platform } from './platform/crazygames.js';
+import { checkSitelock } from './platform/sitelock.js';
+import { installBrowserFixes } from './platform/browserFixes.js';
 import { OnlineSession, randomCode, GAME_VERSION, isRoomCode } from './net/online.js';
 import { randomSeed } from './sim/rng.js';
 
@@ -666,6 +668,8 @@ function showInvite(s) {
 
 // ======================================================================= démarrage
 async function boot() {
+  if (!checkSitelock()) return;
+  installBrowserFixes();
   platform.loadingStart();
   await platform.init();
   detectLanguage(platform.languageHint(), platform.onCrazyGames);

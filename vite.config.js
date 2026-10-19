@@ -8,5 +8,7 @@ export default defineConfig({
   base: './',
   // version du jeu (package.json), affichée dans le menu et utilisée pour séparer les versions en ligne
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
+  // npm run preview : accepte n'importe quel nom d'hôte (tests du sitelock en local)
+  preview: { allowedHosts: true },
   build: { outDir: 'dist', assetsInlineLimit: 0, chunkSizeWarningLimit: 2000 },
 });
