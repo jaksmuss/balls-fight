@@ -70,7 +70,9 @@ export class Renderer {
     v.safe = { t: px('--sat'), r: px('--sar'), b: px('--sab'), l: px('--sal') };
     const short = v.h < 600;
     const duo = (this.world?.teamSize || 1) > 1;
-    const top = v.w < 600 ? 92 : short && !duo ? 62 : short ? 80 : 84, bottom = short ? 42 : 46, side = 10;
+    // le HUD grandit sur les grands écrans (lisible en 1920×1080)
+    v.hud = Math.max(1, Math.min(1.7, v.w / 1150, v.h / 680));
+    const top = (v.w < 600 ? 92 : short && !duo ? 62 : short ? 80 : 84) * v.hud, bottom = short ? 42 : 46, side = 10;
     const total = S + wall * 2;
     v.wall = wall;
     const sf = v.safe;
@@ -613,17 +615,18 @@ export class Renderer {
     ctx.save();
     ctx.translate(sf.l, sf.t);
     const mains = w.mainBalls;
-    const pad = 12;
+    const k = v0.hud || 1;
+    const pad = 12 * k;
     const narrow = v.w < 600;
-    const colW = Math.min(v.w / 2 - pad * 1.5, 340);
+    const colW = Math.min(v.w / 2 - pad * 1.5, 340 * k);
     for (const team of [0, 1]) {
       const members = mains.filter(b => b.team === team);
       members.forEach((b, i) => {
         const right = team === 1;
-        const rowH = members.length > 1 ? 36 : 54;
+        const rowH = (members.length > 1 ? 36 : 54) * k;
         const y = pad + i * rowH;
         const x = right ? v.w - pad - colW : pad;
-        const nameSize = members.length > 1 ? (narrow ? 14 : 17) : (narrow ? 18 : 24);
+        const nameSize = (members.length > 1 ? (narrow ? 14 : 17) : (narrow ? 18 : 24)) * k;
         ctx.save();
         ctx.font = `${nameSize}px ${FONT}`;
         ctx.textBaseline = 'top';
@@ -645,7 +648,7 @@ export class Renderer {
           ctx.fillText(player, right ? tx - lw - 8 : tx + lw + 8, y + nameSize * 0.3);
         }
         // barre de vie (avec trace blanche qui rattrape)
-        const bh = members.length > 1 ? 6 : 8, by = y + nameSize * 1.12;
+        const bh = (members.length > 1 ? 6 : 8) * k, by = y + nameSize * 1.12;
         const frac = Math.max(0, b.hp / b.maxHp);
         const prev = this.hudHp.get(b.id) ?? frac;
         const shown = prev > frac ? prev - Math.min(prev - frac, 0.008) : frac;
