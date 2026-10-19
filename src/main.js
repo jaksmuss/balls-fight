@@ -10,7 +10,7 @@ import { ACHIEVEMENTS, ACHIEVEMENT_BY_ID } from './progress/achievements.js';
 import { COSMETICS, SLOTS, findCosmetic } from './progress/cosmetics.js';
 import { play, unlockAudio, isMuted, setMuted } from './audio.js';
 import { platform } from './platform/crazygames.js';
-import { OnlineSession, randomCode, GAME_VERSION } from './net/online.js';
+import { OnlineSession, randomCode, GAME_VERSION, isRoomCode } from './net/online.js';
 import { randomSeed } from './sim/rng.js';
 
 const canvas = document.getElementById('game');
@@ -321,7 +321,8 @@ function showResult(w, ctx) {
     ];
   } else {
     actions = [
-      button(t('playAgainOnline'), async () => { await maybeAd(); ctx.again(); }, 'btn primary'),
+      button(t('rematch'), async () => { await maybeAd(); ctx.again(); }, 'btn primary'),
+      ctx.newOpponents ? button(t('newOpponents'), async () => { await maybeAd(); ctx.newOpponents(); }) : null,
       button(t('menu'), showMenu),
     ];
   }
@@ -423,6 +424,15 @@ function showStyle() {
 // ======================================================================= en ligne
 function leaveOnline() {
   if (session) { session.leave(); session = null; }
+  platform.leftRoom();
+}
+
+/** Indique à CrazyGames le salon privé du joueur, pour que ses amis puissent le rejoindre. */
+function syncPlatformRoom(s) {
+  if (s !== session) return;
+  if (!s.isPrivate || !s.code || s.phase === 'error' || s.phase === 'idle') { platform.leftRoom(); return; }
+  const present = s.members.filter(m => m.present).length;
+  platform.updateRoom({ roomId: 'P' + s.code, isJoinable: present < s.size, inviteParams: { room: s.code } });
 }
 
 function newSession() {
@@ -468,9 +478,10 @@ function updateQueue(s) {
 }
 
 function onSessionUpdate(s) {
+  syncPlatformRoom(s);
   if (s.phase === 'queue') updateQueue(s);
   else if (s.phase === 'room') {
-    if (screen !== 'room') showRoom(s);
+    if (screen !== 'room' && screen !== 'invite') showRoom(s);
     else s.ui?.refresh?.();
   } else if (s.phase === 'error') showOnlineError(s);
   else if (s.phase === 'countdown' || s.phase === 'fight') {
@@ -499,9 +510,14 @@ function showRoom(s) {
   const timer = h('div', { class: 'timer' });
   const readyBtn = button(t('ready'), () => { s.setReady(); readyBtn.disabled = true; }, 'btn primary');
   const startBtn = s.isPrivate ? button(t('startWithBots'), () => s.startNow()) : null;
+  const modeToggle = s.creator ? h('div', { class: 'toggle' }) : null;
+  const renderMode = () => modeToggle?.replaceChildren(...['1v1', '2v2'].map(m =>
+    button(m.toUpperCase(), () => { s.setMode(m); }, `btn small${s.mode === m ? ' active' : ''}`)));
+  renderMode();
   const head = s.isPrivate
-    ? h('div', { style: 'text-align:right' }, h('div', { class: 'sub' }, t('roomCode')), h('div', { class: 'code', style: 'font-size:28px;letter-spacing:4px' }, s.code))
+    ? h('div', { style: 'text-align:right' }, h('div', { class: 'sub' }, t('roomCode')), h('div', { class: 'code', style: 'font-size:28px;letter-spacing:4px' }, s.code), modeToggle)
     : timer;
+  const notice = h('div', { class: 'notice', style: 'display:none' }, t('hostBusy'));
   const myIndex = () => Math.max(0, s.members.findIndex(m => m.me));
   const p = buildPicker({
     title: t('pickPhase'),
@@ -511,11 +527,20 @@ function showRoom(s) {
     headRight: head,
     bottom: [button(t('quit'), showMenu), startBtn, readyBtn],
   });
+  p.root.insertBefore(notice, p.root.children[1]);
   setScreen('room', p.root);
+  let shownSize = N;
   const tick = setInterval(() => {
     if (screen !== 'room' || session !== s) { clearInterval(tick); return; }
     if (s.deadline) timer.textContent = Math.max(0, Math.ceil((s.deadline - Date.now()) / 1000));
     if (startBtn) startBtn.style.display = s.isHost ? '' : 'none';
+    notice.style.display = s.hostBusy && !s.isHost ? '' : 'none';
+    if (modeToggle) {
+      modeToggle.style.display = s.members.filter(m => m.present).length > 1 ? 'none' : '';
+      renderMode();
+    }
+    // le créateur a changé de mode (1V1 ↔ 2V2) : on reconstruit l'écran
+    if (s.size !== shownSize) { clearInterval(tick); showRoom(s); }
   }, 250);
   s.ui = { refresh: () => { sync(); p.refresh(); } };
 }
@@ -528,11 +553,13 @@ function startOnlineFight(s, info) {
     online: true, startAt: info.startAt,
     onHash: (tick, hsh) => s.reportHash(tick, hsh),
     onEnd: w => {
-      const again = s.isPrivate ? () => joinPrivate(s.code) : () => startQueue(s.mode);
+      // on reste dans le salon : revanche possible avec le même groupe
+      s.endRound();
+      const again = () => s.rematch();
+      const newOpponents = s.isPrivate ? null : () => startQueue(s.mode);
       const mine = info.roster[info.myIndex];
       const prog = recordFight({ world: w, online: true, teamSize: s.size / 2, myTeam: s.myTeam, myFighters: mine ? [mine.fighter] : [], privateMatch: !!s.isPrivate });
-      showResult(w, { kind: 'online', myTeam: s.myTeam, teamSize: s.size / 2, again, prog });
-      leaveOnline();
+      showResult(w, { kind: 'online', myTeam: s.myTeam, teamSize: s.size / 2, again, newOpponents, prog });
     },
   });
   applyStyle(s.myTeam ?? 0);
@@ -623,6 +650,7 @@ function showInvite(s) {
   const orig = s.onUpdate;
   let shown = false;
   s.onUpdate = x => {
+    syncPlatformRoom(x);
     if (x.phase === 'room' && !shown) {
       shown = true;
       setTimeout(() => { if (session === s && s.phase === 'room') showRoom(s); }, 2500);
@@ -656,9 +684,16 @@ async function boot() {
   requestAnimationFrame(frame);
   platform.loadingStop();
 
-  // lien d'invitation (?room=CODE ou paramètre CrazyGames)
-  const code = platform.getInviteParam('room');
-  if (code) joinPrivate(code);
+  // un ami nous rejoint ou nous invite alors que le jeu est déjà ouvert
+  platform.onJoinRoom(params => {
+    const c = params?.room;
+    if (isRoomCode(c) && !(session?.isPrivate && session.code === c.toUpperCase())) joinPrivate(c);
+  });
+  // lancé depuis une invitation (paramètres CrazyGames ou ?room=CODE)
+  const code = platform.inviteParams()?.room || platform.getInviteParam('room');
+  if (isRoomCode(code)) joinPrivate(code);
+  // lancé depuis la page multijoueur de CrazyGames : directement dans une partie privée
+  else if (platform.isInstantMultiplayer()) createPrivate('1v1');
 }
 
 boot();

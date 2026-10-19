@@ -6,6 +6,7 @@ import { setPlatformMuted } from '../audio.js';
 let sdk = null;
 let env = 'none';
 let playing = false;
+let lastRoom = null;   // dernier état de salon envoyé à CrazyGames
 
 async function safe(fn, fallback = null) {
   try { return await fn(); } catch (e) { console.warn('[CrazyGames]', e); return fallback; }
@@ -75,6 +76,34 @@ export const platform = {
       try { const v = sdk.game.getInviteParam(name); if (v) return v; } catch { /* ignoré */ }
     }
     return new URLSearchParams(location.search).get(name);
+  },
+
+  // ------------------------------------------------------------- multijoueur
+  /** Jeu lancé depuis la page multijoueur de CrazyGames : aller directement en partie. */
+  isInstantMultiplayer() {
+    try { return !!(sdk?.game?.isInstantMultiplayer ?? sdk?.game?.isInstantJoin); } catch { return false; }
+  },
+  /** Paramètres d'invitation reçus au lancement (ou null). */
+  inviteParams() {
+    try { return sdk?.game?.inviteParams || null; } catch { return null; }
+  },
+  /** Indique à CrazyGames le salon du joueur, et s'il peut être rejoint par ses amis. */
+  updateRoom(room) {
+    if (!sdk?.game?.updateRoom) return;
+    const key = JSON.stringify(room);
+    if (key === lastRoom) return;
+    lastRoom = key;
+    safe(() => sdk.game.updateRoom(room));
+  },
+  leftRoom() {
+    if (!sdk?.game || lastRoom === null) return;
+    lastRoom = null;
+    safe(() => sdk.game.leftRoom?.());
+  },
+  /** Un ami rejoint / invite pendant que le jeu est déjà ouvert : cb(inviteParams). */
+  onJoinRoom(cb) {
+    if (!sdk?.game?.addJoinRoomListener) return;
+    try { sdk.game.addJoinRoomListener(arg => cb(arg?.inviteParams ?? arg)); } catch (e) { console.warn('[CrazyGames]', e); }
   },
 
   /** Sauvegarde : dans le compte CrazyGames (synchronisée entre appareils) si disponible,

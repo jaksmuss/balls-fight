@@ -190,6 +190,7 @@ export class OnlineSession {
     this.roomId = roomId;
     this.fixed = fixedMembers;          // null = partie privée (membres = présence)
     this.roomJoinedAt = Date.now();
+    this.roundStart = Date.now();
     this.deadline = this.isPrivate ? null : Date.now() + PICK_TIME;
     this.myPick = null;
     this.ready = false;
@@ -215,6 +216,7 @@ export class OnlineSession {
     return this.room.track({
       id: this.id, name: this.name, t: this.roomJoinedAt,
       pick: this.myPick, ready: this.ready, mode: this.mode, creator: !!this.creator, v: GAME_VERSION,
+      phase: this.phase,
       lvl: this.profile.level || 1, title: this.profile.title || null,
     });
   }
@@ -250,7 +252,10 @@ export class OnlineSession {
       for (const m of present) if (!this.firstSeen.has(m.id)) this.firstSeen.set(m.id, m.id === this.id ? this.roomJoinedAt : Date.now());
       const seen = id => this.firstSeen.get(id);
       const sorted = [...present].sort((a, b) => (b.creator ? 1 : 0) - (a.creator ? 1 : 0) || seen(a.id) - seen(b.id) || (a.id < b.id ? -1 : 1));
-      if (!this.mode) this.mode = sorted.find(m => m.creator)?.mode || sorted.find(m => m.mode)?.mode || '1v1';
+      if (!this.creator) {
+        const m = sorted.find(x => x.creator)?.mode;
+        this.mode = m === '2v2' || m === '1v1' ? m : this.mode || '1v1';
+      }
       order = sorted.slice(0, this.size).map(m => m.id);
       // trop de monde : l'hôte renvoie les derniers arrivés
       if (sorted.length > this.size && order[0] === this.id) {
@@ -263,13 +268,17 @@ export class OnlineSession {
       return {
         id, name: cleanName(p?.name || names.get(id)), team: i % 2,
         fighter: typeof p?.pick === 'string' && hasFighter(p.pick) ? p.pick : null,
-        ready: !!p?.ready, present: !!p, me: id === this.id,
+        ready: !!p?.ready && (p.phase === 'room' || p.phase === undefined), present: !!p, me: id === this.id,
+        inRoom: !!p && (p.phase === 'room' || p.phase === undefined),
         lvl: p?.lvl ? cleanInt(p.lvl, 1, 50, 1) : null, title: typeof p?.title === 'string' ? p.title.slice(0, 24) : null,
       };
     });
     // l'hôte est le premier membre encore présent
     const host = this.members.find(m => m.present);
     this.hostId = host ? host.id : null;
+    // l'hôte est encore en combat ou sur l'écran de résultat : on attendra la prochaine manche
+    const hp = host && byId.get(host.id);
+    this.hostBusy = !!hp && hp.phase !== undefined && hp.phase !== 'room';
     this.isHost = !!host && host.id === this.id;
     this.emit();
   }
@@ -278,14 +287,49 @@ export class OnlineSession {
     if (this.phase !== 'room' || !this.isHost || this.started) return;
     const now = Date.now();
     if (this.fixed) {
-      const graceOver = now - this.roomJoinedAt > JOIN_GRACE;
+      const graceOver = now - this.roundStart > JOIN_GRACE;
       const allReady = this.members.every(m => m.ready || (graceOver && !m.present));
       if (allReady && (graceOver || this.members.every(m => m.present))) this.start();
       else if (now >= this.deadline) this.start();
     } else {
-      const full = this.members.length >= this.size && this.members.every(m => m.present && m.ready);
+      const full = this.members.length >= this.size && this.members.every(m => m.present && m.inRoom && m.ready);
       if (full) this.start();
     }
+  }
+
+  /** Le créateur d'une partie privée peut changer de mode tant qu'il est seul. */
+  setMode(mode) {
+    if (!this.creator || this.phase !== 'room' || (mode !== '1v1' && mode !== '2v2')) return;
+    if (this.members.filter(m => m.present).length > 1) return;
+    this.mode = mode;
+    this.publish();
+    this.refreshRoom();
+  }
+
+  // ----------------------------------------------------------- manches
+  /** Fin du combat : on reste dans le salon pour pouvoir rejouer avec le même groupe. */
+  endRound() {
+    if (this.phase !== 'countdown' && this.phase !== 'fight') return;
+    this.phase = 'ended';
+    this.publish();
+    this.emit();
+  }
+
+  /** Revanche : retour au choix des balles, dans le même salon, avec le même groupe. */
+  rematch() {
+    if (!this.room || this.phase !== 'ended') return;
+    this.phase = 'room';
+    this.roundStart = Date.now();
+    this.deadline = this.isPrivate ? null : Date.now() + PICK_TIME;
+    this.myPick = null;
+    this.ready = false;
+    this.started = false;
+    this.hashes = new Map();
+    this.remoteHashes = null;
+    this.desync = false;
+    this.publish();
+    this.refreshRoom();
+    this.every(250, () => this.hostTick());
   }
 
   /** L'expéditeur est-il (ou peut-il légitimement être) l'hôte du salon ? */
@@ -305,7 +349,7 @@ export class OnlineSession {
     const slots = [];
     for (let i = 0; i < N; i++) {
       const m = this.members[i];
-      const human = m && m.present;
+      const human = m && m.present && (m.inRoom || m.me);
       slots.push({
         fighter: (human && m.fighter) || FIGHTER_IDS[(Math.random() * FIGHTER_IDS.length) | 0],
         team: i % 2,
@@ -343,6 +387,7 @@ export class OnlineSession {
       startAt: Date.now() + p.delay,
     };
     this.myTeam = this.startInfo.myIndex >= 0 ? p.roster[this.startInfo.myIndex].team : 0;
+    this.publish();
     this.emit();
     this.onStart?.(this.startInfo);
   }

@@ -21,6 +21,12 @@ Le jeu est en **français et en anglais** : la langue est détectée automatique
 
 Ce qui est déjà intégré (`src/platform/crazygames.js`) :
 
+- **multijoueur entre amis** : le salon privé est signalé à CrazyGames (`updateRoom` avec `roomId`, `isJoinable` et le code dans `inviteParams`), et `leftRoom` est appelé en quittant ;
+- **multijoueur instantané** (`isInstantMultiplayer`) : lancé depuis la page multijoueur de CrazyGames, le jeu crée directement une partie privée joignable (1V1 par défaut, le créateur peut passer en 2V2 tant qu'il est seul) ;
+- **invitations** : au lancement (`inviteParams`) et pendant la partie, sans recharger (`addJoinRoomListener`) ;
+- **revanche dans le même salon** : à la fin d'un combat en ligne, le groupe revient au choix des balles sans quitter le salon ; un joueur qui arrive pendant un combat attend la manche suivante ;
+- **pseudos CrazyGames** affichés en jeu. Lors de l'envoi, indiquer des salons de **2 (1V1) et 4 joueurs (2V2)** ;
+
 - le SDK v3 est chargé dans `index.html` ;
 - `loadingStart` / `loadingStop` au démarrage ;
 - `gameplayStart` / `gameplayStop` au début et à la fin de chaque combat ;
